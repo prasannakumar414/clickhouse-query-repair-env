@@ -88,22 +88,8 @@ SYSTEM_PROMPT = textwrap.dedent(
 ).strip()
 
 
-def log_start(
-    task: str,
-    env: str,
-    model: str,
-    episode: int | None = None,
-    total_episodes: int | None = None,
-    chqr_task_id: str | None = None,
-) -> None:
-    tid = f" chqr_task_id={chqr_task_id}" if chqr_task_id else ""
-    if episode is not None and total_episodes is not None and total_episodes > 1:
-        print(
-            f"[START] task={task} episode={episode}/{total_episodes} env={env} model={model}{tid}",
-            flush=True,
-        )
-    else:
-        print(f"[START] task={task} env={env} model={model}{tid}", flush=True)
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
@@ -225,14 +211,7 @@ async def _run_episodes() -> None:
                 break
 
             fixed_id = plan[ep - 1]
-            log_start(
-                task=TASK_NAME,
-                env=BENCHMARK,
-                model=MODEL_NAME,
-                episode=ep,
-                total_episodes=num_episodes,
-                chqr_task_id=fixed_id,
-            )
+            log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
             reset_kw: dict[str, str] = {}
             if fixed_id is not None:
