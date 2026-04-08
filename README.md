@@ -191,7 +191,10 @@ Stdout format: `[START]`, `[STEP]` per step, `[END]` with final score.
 |----------|---------|-------------|
 | `CLICKHOUSE_HOST` | `127.0.0.1` | ClickHouse server host |
 | `CLICKHOUSE_HTTP_PORT` | `8123` | ClickHouse HTTP port |
-| `CHQR_MAX_STEPS_PER_EPISODE` | `8` | Max steps before forced termination |
+| `CHQR_MAX_STEPS_PER_EPISODE` | `8` | Max steps before forced termination (server) |
+| `CHQR_MAX_STEPS` | `6` | Max steps per episode in `inference.py` |
+| `CHQR_NUM_EPISODES` | `1` | Random episodes (each `reset()` samples a task **with replacement**); ignored if `CHQR_EVAL_ALL_TASKS` is set |
+| `CHQR_EVAL_ALL_TASKS` | unset | Set to `1` to run **every** task JSON once (`reset(task_id=...)`) — full coverage |
 | `INFERENCE_MAX_SECONDS` | `1140` | Wall-clock budget for inference (< 20 min) |
 
 ## Baseline Scores

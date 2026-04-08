@@ -22,7 +22,7 @@ class ClickhouseQueryRepairEnv(
         State,
     ]
 ):
-    """Client for repair episodes (one ClickHouse validation on the final step)."""
+    """Client for repair episodes (each step validated against ClickHouse when safe)."""
 
     def _step_payload(
         self, action: ClickhouseQueryRepairAction

@@ -39,6 +39,13 @@ Rules:
 - Normalized ``score`` is in [0, 1].
 
 Infra: default wall-clock budget under 20 minutes; tune ``INFERENCE_MAX_SECONDS``; targets ~2 vCPU / 8 GiB.
+
+Optional:
+
+- ``CHQR_NUM_EPISODES`` — number of **random** episodes (each ``env.reset()`` samples a task with replacement). Default ``1``.
+  Ignored when ``CHQR_EVAL_ALL_TASKS`` is set.
+- ``CHQR_EVAL_ALL_TASKS`` — if ``1`` / ``true``, run **every** task JSON once (sorted by id): ``env.reset(task_id=...)`` per episode.
+  This is the only mode that guarantees full task coverage.
 """
 
 from __future__ import annotations
@@ -62,6 +69,10 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 TASK_NAME = os.getenv("CHQR_TASK", "queryrepair")
 BENCHMARK = os.getenv("CHQR_BENCHMARK", "clickhouse_query_repair")
+# How many env.reset() episodes when not using CHQR_EVAL_ALL_TASKS (random sampling).
+NUM_EPISODES = int(os.getenv("CHQR_NUM_EPISODES", "1"))
+# If true, run one episode per task JSON (sorted by id); overrides NUM_EPISODES.
+EVAL_ALL_TASKS = True
 MAX_STEPS = int(os.getenv("CHQR_MAX_STEPS", "6"))
 # Whole-run wall time (seconds). Default 1140s (< 20 min) for evaluator limits.
 INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
@@ -72,14 +83,27 @@ SYSTEM_PROMPT = textwrap.dedent(
     """
     You fix broken ClickHouse SQL for tasks that use MergeTree tables, partition keys,
     and typical ClickHouse aggregates. Reply with exactly one SELECT statement — no
-    markdown fences, no commentary. Intermediate turns are drafts; only the final turn
-    should be your best fix (the harness sets submit_final on the last step).
+    markdown fences, no commentary. Use environment feedback each step to improve the query.
     """
 ).strip()
 
 
-def log_start(task: str, env: str, model: str) -> None:
-    print(f"[START] task={task} env={env} model={model}", flush=True)
+def log_start(
+    task: str,
+    env: str,
+    model: str,
+    episode: int | None = None,
+    total_episodes: int | None = None,
+    chqr_task_id: str | None = None,
+) -> None:
+    tid = f" chqr_task_id={chqr_task_id}" if chqr_task_id else ""
+    if episode is not None and total_episodes is not None and total_episodes > 1:
+        print(
+            f"[START] task={task} episode={episode}/{total_episodes} env={env} model={model}{tid}",
+            flush=True,
+        )
+    else:
+        print(f"[START] task={task} env={env} model={model}{tid}", flush=True)
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
@@ -115,7 +139,7 @@ def build_user_prompt(
         {broken_query}
         Simulated issue: {simulated_error}
         Schema hint: {schema_hint}
-        Environment feedback (no DB run yet): {feedback}
+        Environment feedback (last step): {feedback}
         Step {step} of {MAX_STEPS}. Output one SELECT only.
         """
     ).strip()
@@ -153,7 +177,18 @@ def _warn_if_missing_auth() -> None:
         )
 
 
-async def _run_episode() -> None:
+def _episode_task_ids() -> List[Optional[str]]:
+    """
+    Per-episode task selection: fixed id for full-coverage mode, else None (random on server).
+    """
+    if EVAL_ALL_TASKS:
+        from clickhouse_query_repair.server.task_loader import load_all_tasks
+
+        return [str(t["id"]) for t in sorted(load_all_tasks(), key=lambda x: str(x["id"]))]
+    return [None] * max(1, NUM_EPISODES)
+
+
+async def _run_episodes() -> None:
     _warn_if_missing_auth()
     client = OpenAI(
         base_url=API_BASE_URL,
@@ -168,76 +203,113 @@ async def _run_episode() -> None:
         base = os.getenv("CHQR_BASE_URL", "http://127.0.0.1:8000")
         env = ClickhouseQueryRepairEnv(base_url=base)
 
-    rewards: List[float] = []
+    all_rewards: List[float] = []
     steps_taken = 0
     score = 0.0
     success = False
     last_error: Optional[str] = None
     deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
-
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    plan = _episode_task_ids()
+    num_episodes = len(plan)
+    episode_scores: List[float] = []
+    solved_episodes = 0
 
     try:
-        result = await env.reset()
-        obs = result.observation
-        last_feedback = obs.feedback_message
-
-        for step in range(1, MAX_STEPS + 1):
+        for ep in range(1, num_episodes + 1):
             if time.monotonic() > deadline:
                 print(
-                    "[DEBUG] INFERENCE_MAX_SECONDS budget exceeded; stopping episode.",
+                    "[DEBUG] INFERENCE_MAX_SECONDS budget exceeded; stopping run.",
                     file=sys.stderr,
                     flush=True,
                 )
                 break
 
-            user_prompt = build_user_prompt(
-                obs.broken_query,
-                obs.instruction,
-                obs.schema_hint,
-                obs.simulated_error,
-                last_feedback,
-                step,
+            fixed_id = plan[ep - 1]
+            log_start(
+                task=TASK_NAME,
+                env=BENCHMARK,
+                model=MODEL_NAME,
+                episode=ep,
+                total_episodes=num_episodes,
+                chqr_task_id=fixed_id,
             )
-            sql = get_model_sql(client, user_prompt)
-            is_last = step == MAX_STEPS
-            action = ClickhouseQueryRepairAction(repaired_query=sql, submit_final=is_last)
 
-            result = await env.step(action)
+            reset_kw: dict[str, str] = {}
+            if fixed_id is not None:
+                reset_kw["task_id"] = fixed_id
+            result = await env.reset(**reset_kw)
             obs = result.observation
-            reward = float(result.reward or 0.0)
-            reward = min(max(reward, 0.0), 1.0)
-            done = bool(result.done)
-            rewards.append(reward)
-            steps_taken = step
-            last_error = obs.clickhouse_error
-
-            log_step(
-                step=step,
-                action=sql,
-                reward=reward,
-                done=done,
-                error=last_error,
-            )
-
             last_feedback = obs.feedback_message
-            if done:
-                break
+            ep_rewards: List[float] = []
 
-        score = 1.0 if rewards and rewards[-1] >= 0.99 else (sum(rewards) / max(len(rewards), 1))
-        score = min(max(score, 0.0), 1.0)
-        success = bool(rewards and rewards[-1] >= 0.99)
+            for step in range(1, MAX_STEPS + 1):
+                if time.monotonic() > deadline:
+                    print(
+                        "[DEBUG] INFERENCE_MAX_SECONDS budget exceeded; stopping episode.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    break
+
+                user_prompt = build_user_prompt(
+                    obs.broken_query,
+                    obs.instruction,
+                    obs.schema_hint,
+                    obs.simulated_error,
+                    last_feedback,
+                    step,
+                )
+                sql = get_model_sql(client, user_prompt)
+                is_last = step == MAX_STEPS
+                action = ClickhouseQueryRepairAction(repaired_query=sql, submit_final=is_last)
+
+                result = await env.step(action)
+                obs = result.observation
+                reward = float(result.reward or 0.0)
+                reward = min(max(reward, 0.0), 1.0)
+                done = bool(result.done)
+                ep_rewards.append(reward)
+                all_rewards.append(reward)
+                steps_taken += 1
+                last_error = obs.clickhouse_error
+
+                log_step(
+                    step=step,
+                    action=sql,
+                    reward=reward,
+                    done=done,
+                    error=last_error,
+                )
+
+                last_feedback = obs.feedback_message
+                if done:
+                    break
+
+            ep_score = (
+                1.0
+                if ep_rewards and ep_rewards[-1] >= 0.99
+                else (sum(ep_rewards) / max(len(ep_rewards), 1))
+            )
+            ep_score = min(max(ep_score, 0.0), 1.0)
+            episode_scores.append(ep_score)
+            if ep_rewards and ep_rewards[-1] >= 0.99:
+                solved_episodes += 1
+
+        if episode_scores:
+            score = sum(episode_scores) / len(episode_scores)
+            score = min(max(score, 0.0), 1.0)
+        success = solved_episodes == len(episode_scores) and len(episode_scores) > 0
 
     finally:
         try:
             await env.close()
         except Exception as exc:  # noqa: BLE001
             print(f"[DEBUG] env.close(): {exc}", file=sys.stderr, flush=True)
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+        log_end(success=success, steps=steps_taken, score=score, rewards=all_rewards)
 
 
 async def main() -> None:
-    await _run_episode()
+    await _run_episodes()
 
 
 if __name__ == "__main__":

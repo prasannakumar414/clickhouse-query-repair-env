@@ -87,11 +87,29 @@ class ClickhouseQueryRepairEnvironment(Environment):
             "episode_id": self._state.episode_id,
         }
 
-    def reset(self) -> ClickhouseQueryRepairObservation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> ClickhouseQueryRepairObservation:
+        if seed is not None:
+            self._rng.seed(seed)
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._steps_taken = 0
         self._last_submitted_sql = ""
-        self._current_task = self._rng.choice(self._tasks)
+        if task_id is not None:
+            tid = str(task_id).strip()
+            for t in self._tasks:
+                if str(t["id"]) == tid:
+                    self._current_task = t
+                    break
+            else:
+                known = ", ".join(sorted(str(x["id"]) for x in self._tasks))
+                raise ValueError(f"Unknown task_id={tid!r}. Known: {known}")
+        else:
+            self._current_task = self._rng.choice(self._tasks)
         assert self._current_task is not None
 
         run_setup_statements(str(self._current_task["setup_sql"]))

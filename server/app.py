@@ -69,6 +69,7 @@ def main(host: str = "0.0.0.0", port: int = 8000):
     uvicorn.run(app, host=host, port=port)
 
 
+# openenv multi-mode validation scans for the literal substrings "__name__" and main().
 if __name__ == "__main__":
     import argparse
 
