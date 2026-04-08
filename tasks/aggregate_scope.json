@@ -1,0 +1,9 @@
+{
+  "id": "aggregate_scope",
+  "instruction": "Average score must ignore null sensor readings; use the right aggregate for that.",
+  "broken_query": "SELECT device, avg(score) AS m FROM chqr_tasks.t_sensors_ag GROUP BY device",
+  "gold_query": "SELECT device, avgIf(score, isNotNull(score)) AS m FROM chqr_tasks.t_sensors_ag GROUP BY device",
+  "simulated_error": "Plain avg() folded NULL into the wrong denominator for sparse devices.",
+  "schema_hint": "Nullable(Float32) column score on MergeTree t_sensors_ag.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_sensors_ag; CREATE TABLE chqr_tasks.t_sensors_ag (device String, score Nullable(Float32)) ENGINE = MergeTree() ORDER BY (device); INSERT INTO chqr_tasks.t_sensors_ag VALUES ('d1', 10), ('d1', NULL), ('d1', 20), ('d2', NULL), ('d2', NULL)"
+}

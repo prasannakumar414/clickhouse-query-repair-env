@@ -1,0 +1,58 @@
+# --- OpenEnv / Docker Specific ---
+# Ignore Docker build images, containers, and temporary volumes
+envs/**/server/build/
+envs/**/server/tmp/
+envs/**/server/*.log
+.docker_cache/
+
+# --- Environment Secrets (CRITICAL) ---
+# Never commit API keys or sensitive environment configurations
+.env
+.env.*
+!.env.example
+
+# --- Python / RL Training ---
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Dependencies
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Data and Logs ---
+# Ignore training logs, model checkpoints, and datasets
+logs/
+checkpoints/
+data/
+results/
+wandb/
+.tensorboard/
+
+# --- IDE/Editor Specific ---
+# VS Code
+.vscode/
+# PyCharm/IntelliJ
+.idea/
+
+# --- Operating System Files ---
+.DS_Store
+Thumbs.db

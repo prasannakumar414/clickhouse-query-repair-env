@@ -1,0 +1,9 @@
+{
+  "id": "column_typo",
+  "instruction": "Fix the identifier so it matches the physical column on the narrow events table.",
+  "broken_query": "SELECT evt_id, device FROM chqr_tasks.t_evt_narrow LIMIT 5",
+  "gold_query": "SELECT event_id, device FROM chqr_tasks.t_evt_narrow LIMIT 5",
+  "simulated_error": "Unknown identifier 'evt_id' — check spelling against the MergeTree definition.",
+  "schema_hint": "Columns are event_id (UUID string), device, score.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_evt_narrow; CREATE TABLE chqr_tasks.t_evt_narrow (event_id String, device String, score Float32) ENGINE = MergeTree() ORDER BY (event_id); INSERT INTO chqr_tasks.t_evt_narrow VALUES ('e1', 'pda', 0.4), ('e2', 'kiosk', 0.9), ('e3', 'web', 0.2)"
+}

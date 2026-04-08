@@ -1,0 +1,4 @@
+openenv-core[core]>=0.2.2
+clickhouse-connect>=0.7.0
+fastapi>=0.115.0
+uvicorn>=0.24.0

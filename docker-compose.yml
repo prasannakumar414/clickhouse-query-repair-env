@@ -1,0 +1,11 @@
+# Optional local runner: one image bundles ClickHouse + the OpenEnv FastAPI app.
+services:
+  clickhouse_query_repair:
+    build: .
+    image: clickhouse_query_repair_env:latest
+    ports:
+      - "8000:8000"
+    environment:
+      CLICKHOUSE_HOST: "127.0.0.1"
+      CLICKHOUSE_HTTP_PORT: "8123"
+      CHQR_MAX_STEPS_PER_EPISODE: "8"

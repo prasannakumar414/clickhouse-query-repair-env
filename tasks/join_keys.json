@@ -1,0 +1,9 @@
+{
+  "id": "join_keys",
+  "instruction": "Join orders to customers on the stable surrogate key, not the display name.",
+  "broken_query": "SELECT o.order_id, c.tier FROM chqr_tasks.t_orders_jk AS o INNER JOIN chqr_tasks.t_cust_jk AS c ON o.buyer_name = c.full_name",
+  "gold_query": "SELECT o.order_id, c.tier FROM chqr_tasks.t_orders_jk AS o INNER JOIN chqr_tasks.t_cust_jk AS c ON o.customer_id = c.customer_id",
+  "simulated_error": "Join exploded: string names are not unique across regions.",
+  "schema_hint": "Both tables expose customer_id UInt32.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_cust_jk; DROP TABLE IF EXISTS chqr_tasks.t_orders_jk; CREATE TABLE chqr_tasks.t_cust_jk (customer_id UInt32, full_name String, tier String) ENGINE = MergeTree() ORDER BY (customer_id); CREATE TABLE chqr_tasks.t_orders_jk (order_id String, customer_id UInt32, buyer_name String, amount Float64) ENGINE = MergeTree() ORDER BY (order_id); INSERT INTO chqr_tasks.t_cust_jk VALUES (1, 'Ada', 'gold'), (2, 'Bo', 'silver'); INSERT INTO chqr_tasks.t_orders_jk VALUES ('o-1', 1, 'Ada', 120), ('o-2', 2, 'Bo', 40)"
+}

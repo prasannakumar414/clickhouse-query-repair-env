@@ -1,0 +1,9 @@
+{
+  "id": "merge_partition_month",
+  "instruction": "The analyst wanted February 2024 totals per stock-keeping unit, but the draft filters the wrong calendar month.",
+  "broken_query": "SELECT sku, sum(units) AS u FROM chqr_tasks.t_sales_mp WHERE toYYYYMM(event_date) = 202401 GROUP BY sku ORDER BY sku",
+  "gold_query": "SELECT sku, sum(units) AS u FROM chqr_tasks.t_sales_mp WHERE toYYYYMM(event_date) = 202402 GROUP BY sku ORDER BY sku",
+  "simulated_error": "Numbers look like January; business asked for February slice only.",
+  "schema_hint": "Table t_sales_mp uses MergeTree partitioned by toYYYYMM(event_date); keys include sku and event_date.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_sales_mp; CREATE TABLE chqr_tasks.t_sales_mp (event_date Date, sku String, units UInt32) ENGINE = MergeTree() PARTITION BY toYYYYMM(event_date) ORDER BY (sku, event_date); INSERT INTO chqr_tasks.t_sales_mp VALUES ('2024-01-10', 'alpha', 3), ('2024-01-20', 'beta', 1), ('2024-02-05', 'alpha', 4), ('2024-02-11', 'beta', 2), ('2024-02-28', 'gamma', 5)"
+}

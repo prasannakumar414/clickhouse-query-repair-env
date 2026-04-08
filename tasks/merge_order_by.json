@@ -1,0 +1,9 @@
+{
+  "id": "merge_order_by",
+  "instruction": "Return the latest event timestamp per region; the draft uses a non-deterministic aggregate instead of the true maximum.",
+  "broken_query": "SELECT region, any(event_time) AS latest FROM chqr_tasks.t_events_ob GROUP BY region ORDER BY region",
+  "gold_query": "SELECT region, max(event_time) AS latest FROM chqr_tasks.t_events_ob GROUP BY region ORDER BY region",
+  "simulated_error": "any() does not guarantee the newest DateTime value for each region.",
+  "schema_hint": "MergeTree table t_events_ob is ordered by (region, event_time).",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_events_ob; CREATE TABLE chqr_tasks.t_events_ob (region String, event_time DateTime, payload String) ENGINE = MergeTree() ORDER BY (region, event_time); INSERT INTO chqr_tasks.t_events_ob VALUES ('east', '2024-06-01 09:00:00', 'a'), ('east', '2024-06-02 10:00:00', 'b'), ('west', '2024-06-01 12:00:00', 'c'), ('west', '2024-06-03 08:30:00', 'd')"
+}

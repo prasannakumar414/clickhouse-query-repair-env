@@ -1,0 +1,9 @@
+{
+  "id": "prewhere_hint",
+  "instruction": "Filter on the high-selectivity device id first so MergeTree can use PREWHERE effectively (express that intent in SQL).",
+  "broken_query": "SELECT ts, reading FROM chqr_tasks.t_telemetry_pw WHERE reading > 0.5 AND device_id = 'dev-7' LIMIT 10",
+  "gold_query": "SELECT ts, reading FROM chqr_tasks.t_telemetry_pw PREWHERE device_id = 'dev-7' WHERE reading > 0.5 LIMIT 10",
+  "simulated_error": "Predicate order forces a full scan before the cheap equality filter.",
+  "schema_hint": "Wide MergeTree with device_id String and ts DateTime; readings are sparse.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_telemetry_pw; CREATE TABLE chqr_tasks.t_telemetry_pw (device_id String, ts DateTime, reading Float32) ENGINE = MergeTree() ORDER BY (device_id, ts); INSERT INTO chqr_tasks.t_telemetry_pw SELECT 'dev-7', toDateTime('2024-08-01 00:00:00') + number, if(number % 40 = 0, 0.9, 0.1) FROM numbers(200)"
+}
