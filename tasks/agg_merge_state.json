@@ -1,0 +1,11 @@
+{
+  "id": "agg_merge_state",
+  "difficulty": "hard",
+  "required_terms": ["avgMerge", "countMerge"],
+  "instruction": "The dashboard reads pre-aggregated data from an AggregatingMergeTree table whose columns store serialized partial aggregation states (AggregateFunction types). Plain avg() and count() cannot operate on these binary states. Use the correct ClickHouse -Merge combinator functions to finalize the stored states into actual numbers.",
+  "broken_query": "SELECT category, avg(avg_price) AS final_avg, count(cnt) AS total_cnt FROM chqr_tasks.t_product_agg GROUP BY category ORDER BY category",
+  "gold_query": "SELECT category, avgMerge(avg_price) AS final_avg, countMerge(cnt) AS total_cnt FROM chqr_tasks.t_product_agg GROUP BY category ORDER BY category",
+  "simulated_error": "Illegal type AggregateFunction(avg, Float64) of argument of aggregate function avg. The column stores partial aggregation states, not plain numbers.",
+  "schema_hint": "AggregatingMergeTree ordered by category. Columns: category String, avg_price AggregateFunction(avg, Float64), cnt AggregateFunction(count, UInt64). Populated via avgState() and countState() from a source table.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_product_agg; DROP TABLE IF EXISTS chqr_tasks.t_product_src; CREATE TABLE chqr_tasks.t_product_src (category String, price Float64) ENGINE = MergeTree() ORDER BY category; CREATE TABLE chqr_tasks.t_product_agg (category String, avg_price AggregateFunction(avg, Float64), cnt AggregateFunction(count, UInt64)) ENGINE = AggregatingMergeTree() ORDER BY category; INSERT INTO chqr_tasks.t_product_src VALUES ('electronics', 299.99), ('electronics', 149.50), ('electronics', 599.00), ('clothing', 49.99), ('clothing', 89.99), ('clothing', 29.99), ('books', 14.99), ('books', 24.99); INSERT INTO chqr_tasks.t_product_agg SELECT category, avgState(price), countState(price) FROM chqr_tasks.t_product_src GROUP BY category"
+}

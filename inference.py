@@ -5,16 +5,49 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-Benchmark driver for the ClickHouse query repair environment.
+Inference Script — ClickHouse query repair
+============================================
+MANDATORY (environment configuration)
 
-Emits [START], one [STEP] per env.step, and [END] lines to stdout (see below).
+- ``API_BASE_URL`` — OpenAI-compatible API base URL for the LLM.
+- ``MODEL_NAME`` — Model id for chat completions.
+- ``HF_TOKEN`` — Hugging Face / provider API key (also ``API_KEY`` is accepted).
+- ``LOCAL_IMAGE_NAME`` — Docker image for ``EnvClient.from_docker_image()`` (alias: ``IMAGE_NAME``).
+
+Defaults may be set for API_BASE_URL and MODEL_NAME for local testing only.
+
+- The inference script must be named ``inference.py`` at the project root.
+- Use the OpenAI client for all LLM calls (``OpenAI`` + ``chat.completions``).
+
+STDOUT FORMAT
+-------------
+Emit exactly three line types to stdout, in order:
+
+  [START] task=<task_name> env=<benchmark> model=<model_name>
+  [STEP] step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+  [END] success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
+
+Rules:
+
+- One [START] at episode begin.
+- One [STEP] per ``env.step()``, immediately after it returns.
+- One [END] after ``env.close()``, always (including on errors).
+- ``reward`` and each reward in ``rewards`` use two decimal places.
+- ``done`` and ``success`` are lowercase ``true`` or ``false``.
+- ``error`` is the last error string, or the literal ``null``.
+- Single line per record; no embedded newlines in fields.
+- Normalized ``score`` is in [0, 1].
+
+Infra: default wall-clock budget under 20 minutes; tune ``INFERENCE_MAX_SECONDS``; targets ~2 vCPU / 8 GiB.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import textwrap
+import time
 from typing import List, Optional
 
 from openai import OpenAI
@@ -22,7 +55,7 @@ from openai import OpenAI
 from clickhouse_query_repair import ClickhouseQueryRepairAction
 from clickhouse_query_repair.client import ClickhouseQueryRepairEnv
 
-IMAGE_NAME = os.getenv("IMAGE_NAME")
+IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
@@ -30,6 +63,8 @@ MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 TASK_NAME = os.getenv("CHQR_TASK", "queryrepair")
 BENCHMARK = os.getenv("CHQR_BENCHMARK", "clickhouse_query_repair")
 MAX_STEPS = int(os.getenv("CHQR_MAX_STEPS", "6"))
+# Whole-run wall time (seconds). Default 1140s (< 20 min) for evaluator limits.
+INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
 
@@ -50,8 +85,9 @@ def log_start(task: str, env: str, model: str) -> None:
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
+    safe_action = " ".join(str(action).split())
     print(
-        f"[STEP] step={step} action={action!r} reward={reward:.2f} done={done_val} error={error_val}",
+        f"[STEP] step={step} action={safe_action} reward={reward:.2f} done={done_val} error={error_val}",
         flush=True,
     )
 
@@ -59,7 +95,7 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -86,24 +122,45 @@ def build_user_prompt(
 
 
 def get_model_sql(client: OpenAI, user_prompt: str) -> str:
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
-        stream=False,
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            stream=False,
+        )
+        text = (completion.choices[0].message.content or "").strip()
+        for fence in ("```sql", "```"):
+            text = text.replace(fence, "")
+        return text.strip()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[DEBUG] LLM call failed: {exc}", file=sys.stderr, flush=True)
+        return "SELECT 1"
+
+
+def _warn_if_missing_auth() -> None:
+    if API_KEY:
+        return
+    if "huggingface.co" in API_BASE_URL or "hf.co" in API_BASE_URL:
+        print(
+            "WARNING: HF_TOKEN (or API_KEY) is unset; Hugging Face router calls may fail.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+async def _run_episode() -> None:
+    _warn_if_missing_auth()
+    client = OpenAI(
+        base_url=API_BASE_URL,
+        api_key=API_KEY,
+        timeout=120.0,
+        max_retries=2,
     )
-    text = (completion.choices[0].message.content or "").strip()
-    for fence in ("```sql", "```"):
-        text = text.replace(fence, "")
-    return text.strip()
-
-
-async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     if IMAGE_NAME:
         env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
@@ -116,6 +173,7 @@ async def main() -> None:
     score = 0.0
     success = False
     last_error: Optional[str] = None
+    deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
 
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
@@ -125,6 +183,14 @@ async def main() -> None:
         last_feedback = obs.feedback_message
 
         for step in range(1, MAX_STEPS + 1):
+            if time.monotonic() > deadline:
+                print(
+                    "[DEBUG] INFERENCE_MAX_SECONDS budget exceeded; stopping episode.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                break
+
             user_prompt = build_user_prompt(
                 obs.broken_query,
                 obs.instruction,
@@ -140,6 +206,7 @@ async def main() -> None:
             result = await env.step(action)
             obs = result.observation
             reward = float(result.reward or 0.0)
+            reward = min(max(reward, 0.0), 1.0)
             done = bool(result.done)
             rewards.append(reward)
             steps_taken = step
@@ -147,7 +214,7 @@ async def main() -> None:
 
             log_step(
                 step=step,
-                action=sql[:500],
+                action=sql,
                 reward=reward,
                 done=done,
                 error=last_error,
@@ -165,8 +232,12 @@ async def main() -> None:
         try:
             await env.close()
         except Exception as exc:  # noqa: BLE001
-            print(f"[DEBUG] env.close(): {exc}", flush=True)
+            print(f"[DEBUG] env.close(): {exc}", file=sys.stderr, flush=True)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+
+async def main() -> None:
+    await _run_episode()
 
 
 if __name__ == "__main__":

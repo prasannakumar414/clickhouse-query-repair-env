@@ -1,5 +1,6 @@
 {
   "id": "aggregate_scope",
+  "difficulty": "medium",
   "instruction": "Average score must ignore null sensor readings; use the right aggregate for that.",
   "broken_query": "SELECT device, avg(score) AS m FROM chqr_tasks.t_sensors_ag GROUP BY device",
   "gold_query": "SELECT device, avgIf(score, isNotNull(score)) AS m FROM chqr_tasks.t_sensors_ag GROUP BY device",

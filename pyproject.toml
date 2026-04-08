@@ -16,6 +16,7 @@ requires-python = ">=3.10"
 dependencies = [
     "openenv-core[core]>=0.2.2",
     "clickhouse-connect>=0.7.0",
+    "pip-system-certs>=5.3",
 ]
 
 [project.optional-dependencies]

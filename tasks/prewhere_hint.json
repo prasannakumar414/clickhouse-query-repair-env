@@ -1,5 +1,7 @@
 {
   "id": "prewhere_hint",
+  "difficulty": "hard",
+  "required_terms": ["PREWHERE"],
   "instruction": "Filter on the high-selectivity device id first so MergeTree can use PREWHERE effectively (express that intent in SQL).",
   "broken_query": "SELECT ts, reading FROM chqr_tasks.t_telemetry_pw WHERE reading > 0.5 AND device_id = 'dev-7' LIMIT 10",
   "gold_query": "SELECT ts, reading FROM chqr_tasks.t_telemetry_pw PREWHERE device_id = 'dev-7' WHERE reading > 0.5 LIMIT 10",

@@ -1,5 +1,6 @@
 {
   "id": "join_keys",
+  "difficulty": "medium",
   "instruction": "Join orders to customers on the stable surrogate key, not the display name.",
   "broken_query": "SELECT o.order_id, c.tier FROM chqr_tasks.t_orders_jk AS o INNER JOIN chqr_tasks.t_cust_jk AS c ON o.buyer_name = c.full_name",
   "gold_query": "SELECT o.order_id, c.tier FROM chqr_tasks.t_orders_jk AS o INNER JOIN chqr_tasks.t_cust_jk AS c ON o.customer_id = c.customer_id",

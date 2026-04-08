@@ -1,0 +1,11 @@
+{
+  "id": "collapsing_sign_sum",
+  "difficulty": "hard",
+  "required_terms": ["sign"],
+  "instruction": "Total revenue per product is overstated because the query ignores the sign column. The table uses CollapsingMergeTree(sign) where sign=1 marks active rows and sign=-1 marks canceled rows. When an order is amended, the old row is canceled (sign=-1) and a replacement is inserted (sign=1). Fix both the revenue sum and the order count to use sign-aware aggregation.",
+  "broken_query": "SELECT product_id, sum(revenue) AS total_rev, count() AS order_cnt FROM chqr_tasks.t_orders_cs GROUP BY product_id ORDER BY product_id",
+  "gold_query": "SELECT product_id, sum(revenue * sign) AS total_rev, sum(sign) AS order_cnt FROM chqr_tasks.t_orders_cs GROUP BY product_id ORDER BY product_id",
+  "simulated_error": "Product 'widget' shows revenue 1050 but the corrected total should be 450 after the amendment. Order count shows 4 but only 2 are live.",
+  "schema_hint": "CollapsingMergeTree(sign) ordered by (product_id, order_ts). Columns: product_id String, revenue Float64, order_ts DateTime, sign Int8.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_orders_cs; CREATE TABLE chqr_tasks.t_orders_cs (product_id String, revenue Float64, order_ts DateTime, sign Int8) ENGINE = CollapsingMergeTree(sign) ORDER BY (product_id, order_ts); INSERT INTO chqr_tasks.t_orders_cs VALUES ('widget', 200, '2024-01-10 10:00:00', 1), ('widget', 300, '2024-01-12 14:00:00', 1); INSERT INTO chqr_tasks.t_orders_cs VALUES ('widget', 300, '2024-01-12 14:00:00', -1), ('widget', 250, '2024-01-12 14:05:00', 1); INSERT INTO chqr_tasks.t_orders_cs VALUES ('gadget', 150, '2024-01-15 09:00:00', 1)"
+}

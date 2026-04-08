@@ -1,0 +1,11 @@
+{
+  "id": "argmax_null_collapse",
+  "difficulty": "hard",
+  "required_terms": ["argMaxIf", "isNotNull"],
+  "instruction": "Build the latest-state view for each user from a partial-update changelog. Each row only populates columns that changed; unchanged columns are NULL. The current query uses argMax which blindly picks values from the row with the latest timestamp, returning NULLs for columns that were not updated in that particular row. Fix the query so each column reflects the most recent NON-NULL value for that user.",
+  "broken_query": "SELECT user_id, argMax(display_name, updated_at) AS latest_name, argMax(email, updated_at) AS latest_email, argMax(status, updated_at) AS latest_status FROM chqr_tasks.t_user_changelog GROUP BY user_id ORDER BY user_id",
+  "gold_query": "SELECT user_id, argMaxIf(display_name, updated_at, isNotNull(display_name)) AS latest_name, argMaxIf(email, updated_at, isNotNull(email)) AS latest_email, argMaxIf(status, updated_at, isNotNull(status)) AS latest_status FROM chqr_tasks.t_user_changelog GROUP BY user_id ORDER BY user_id",
+  "simulated_error": "User 'u1' shows latest_name=NULL and latest_status=NULL even though the user has a name ('Alice Smith') and status ('active'). argMax picked the most recent row overall, which only updated the email column.",
+  "schema_hint": "MergeTree ordered by (user_id, updated_at). Columns: user_id String, display_name Nullable(String), email Nullable(String), status Nullable(String), updated_at DateTime. Each row is a partial update; only changed columns are non-NULL.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_user_changelog; CREATE TABLE chqr_tasks.t_user_changelog (user_id String, display_name Nullable(String), email Nullable(String), status Nullable(String), updated_at DateTime) ENGINE = MergeTree() ORDER BY (user_id, updated_at); INSERT INTO chqr_tasks.t_user_changelog VALUES ('u1', 'Alice', 'alice@v1.com', 'active', '2024-01-01 00:00:00'), ('u1', 'Alice Smith', NULL, NULL, '2024-02-01 00:00:00'), ('u1', NULL, 'alice@v2.com', NULL, '2024-03-01 00:00:00'), ('u2', 'Bob', 'bob@co.com', 'trial', '2024-01-15 00:00:00'), ('u2', NULL, NULL, 'active', '2024-02-20 00:00:00'), ('u2', NULL, 'bob@newco.com', NULL, '2024-04-01 00:00:00')"
+}

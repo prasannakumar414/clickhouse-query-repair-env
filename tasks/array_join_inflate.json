@@ -1,0 +1,11 @@
+{
+  "id": "array_join_inflate",
+  "difficulty": "hard",
+  "required_terms": ["length"],
+  "instruction": "Attribute each order's revenue equally across its tags. The current query credits the FULL revenue to EACH tag, so a $100 order with 3 tags contributes $100 to every tag ($300 total instead of $100). The sum of tag_revenue across all tags must equal the actual total revenue. Normalize revenue by the number of tags per order.",
+  "broken_query": "SELECT t AS tag, sum(revenue) AS tag_revenue FROM chqr_tasks.t_tagged_orders_aj ARRAY JOIN tags AS t GROUP BY tag ORDER BY tag",
+  "gold_query": "SELECT t AS tag, sum(revenue / length(tags)) AS tag_revenue FROM chqr_tasks.t_tagged_orders_aj ARRAY JOIN tags AS t GROUP BY tag ORDER BY tag",
+  "simulated_error": "Sum of tag_revenue across all tags is $2250 but total order revenue is only $800. Revenue is multiplied by the number of tags per order due to ARRAY JOIN row expansion.",
+  "schema_hint": "MergeTree ordered by order_id. Columns: order_id String, tags Array(String), revenue Float64. Each order has 1-4 tags.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_tagged_orders_aj; CREATE TABLE chqr_tasks.t_tagged_orders_aj (order_id String, tags Array(String), revenue Float64) ENGINE = MergeTree() ORDER BY order_id; INSERT INTO chqr_tasks.t_tagged_orders_aj VALUES ('ord-1', ['electronics', 'sale', 'featured'], 300), ('ord-2', ['clothing'], 100), ('ord-3', ['electronics', 'new'], 250), ('ord-4', ['books', 'sale', 'bestseller', 'featured'], 150)"
+}

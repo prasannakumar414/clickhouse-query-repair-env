@@ -1,0 +1,10 @@
+{
+  "id": "missing_limit",
+  "difficulty": "easy",
+  "instruction": "The analyst wants only the 10 most recent log entries by timestamp, but the draft returns every row. Add the missing clause.",
+  "broken_query": "SELECT ts, level, message FROM chqr_tasks.t_app_logs_ml ORDER BY ts DESC",
+  "gold_query": "SELECT ts, level, message FROM chqr_tasks.t_app_logs_ml ORDER BY ts DESC LIMIT 10",
+  "simulated_error": "Dashboard times out rendering thousands of rows; only the latest 10 are needed.",
+  "schema_hint": "MergeTree table t_app_logs_ml ordered by ts with columns ts DateTime, level String, message String.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_app_logs_ml; CREATE TABLE chqr_tasks.t_app_logs_ml (ts DateTime, level String, message String) ENGINE = MergeTree() ORDER BY ts; INSERT INTO chqr_tasks.t_app_logs_ml SELECT toDateTime('2024-06-01 00:00:00') + number * 60, if(number % 5 = 0, 'ERROR', if(number % 3 = 0, 'WARN', 'INFO')), concat('event-', toString(number)) FROM numbers(200)"
+}

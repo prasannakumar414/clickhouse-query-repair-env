@@ -1,5 +1,6 @@
 {
   "id": "column_typo",
+  "difficulty": "easy",
   "instruction": "Fix the identifier so it matches the physical column on the narrow events table.",
   "broken_query": "SELECT evt_id, device FROM chqr_tasks.t_evt_narrow LIMIT 5",
   "gold_query": "SELECT event_id, device FROM chqr_tasks.t_evt_narrow LIMIT 5",

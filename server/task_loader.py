@@ -31,7 +31,16 @@ def load_all_tasks() -> List[Dict[str, Any]]:
 
 
 def validate_task_schema(task: Dict[str, Any]) -> None:
-    required = ("id", "instruction", "broken_query", "gold_query", "setup_sql")
+    required = ("id", "instruction", "broken_query", "gold_query", "setup_sql", "difficulty")
     missing = [k for k in required if k not in task or not str(task[k]).strip()]
     if missing:
         raise ValueError(f"Task missing fields: {missing}")
+    if task["difficulty"] not in ("easy", "medium", "hard"):
+        raise ValueError(
+            f"Task {task['id']} has invalid difficulty: {task['difficulty']!r}"
+        )
+    rt = task.get("required_terms")
+    if rt is not None and (not isinstance(rt, list) or not all(isinstance(t, str) for t in rt)):
+        raise ValueError(
+            f"Task {task['id']} required_terms must be a list of strings"
+        )

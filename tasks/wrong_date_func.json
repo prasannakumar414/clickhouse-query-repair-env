@@ -1,0 +1,10 @@
+{
+  "id": "wrong_date_func",
+  "difficulty": "medium",
+  "instruction": "Retrieve total page views for March 2024. The current query filters with toMonth() which matches March in ANY year, not just 2024. Use a date-range filter that also enables MergeTree partition pruning on the toYYYYMM partition key.",
+  "broken_query": "SELECT page, sum(views) AS total_views FROM chqr_tasks.t_page_views_df WHERE toMonth(event_date) = 3 GROUP BY page ORDER BY page",
+  "gold_query": "SELECT page, sum(views) AS total_views FROM chqr_tasks.t_page_views_df WHERE toYYYYMM(event_date) = 202403 GROUP BY page ORDER BY page",
+  "simulated_error": "Report includes March 2023 data mixed with March 2024; totals are inflated. toMonth() ignores the year component.",
+  "schema_hint": "MergeTree partitioned by toYYYYMM(event_date). Columns: event_date Date, page String, views UInt32. Data spans 2023-03 through 2024-06.",
+  "setup_sql": "CREATE DATABASE IF NOT EXISTS chqr_tasks; DROP TABLE IF EXISTS chqr_tasks.t_page_views_df; CREATE TABLE chqr_tasks.t_page_views_df (event_date Date, page String, views UInt32) ENGINE = MergeTree() PARTITION BY toYYYYMM(event_date) ORDER BY (page, event_date); INSERT INTO chqr_tasks.t_page_views_df VALUES ('2023-03-10', 'home', 500), ('2023-03-20', 'about', 120), ('2024-03-05', 'home', 800), ('2024-03-15', 'about', 200), ('2024-03-25', 'home', 300), ('2024-04-01', 'home', 150), ('2024-06-10', 'about', 90)"
+}

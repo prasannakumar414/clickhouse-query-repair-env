@@ -1,5 +1,6 @@
 {
   "id": "merge_order_by",
+  "difficulty": "medium",
   "instruction": "Return the latest event timestamp per region; the draft uses a non-deterministic aggregate instead of the true maximum.",
   "broken_query": "SELECT region, any(event_time) AS latest FROM chqr_tasks.t_events_ob GROUP BY region ORDER BY region",
   "gold_query": "SELECT region, max(event_time) AS latest FROM chqr_tasks.t_events_ob GROUP BY region ORDER BY region",
