@@ -120,3 +120,4 @@ ENV CLICKHOUSE_HOST=127.0.0.1 \
     CLICKHOUSE_WATCHDOG_ENABLE=0
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["sh", "-c", "cd /app/env && uvicorn clickhouse_query_repair.server.app:app --host 0.0.0.0 --port 8000"]

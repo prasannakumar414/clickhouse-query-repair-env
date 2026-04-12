@@ -9,14 +9,10 @@ CH_CONFIG="${CLICKHOUSE_CONFIG:-/etc/clickhouse-server/config.xml}"
 
 rm -f /var/run/clickhouse-server/clickhouse-server.pid 2>/dev/null || true
 
-# Tail logs to stdout (dirs and files already exist with correct ownership)
 tail -F \
   /var/log/clickhouse-server/clickhouse-server.log \
   /var/log/clickhouse-server/clickhouse-server.err.log 2>/dev/null &
 
-# Remove the > redirects from all three branches — let CH manage its own files
-# Try to switch to clickhouse user; fall back to running as current user (root)
-# in sandboxed envs where setuid/setgid caps are dropped
 CLICKHOUSE_CMD="clickhouse-server --config-file=${CH_CONFIG}"
 
 if id clickhouse &>/dev/null && command -v runuser >/dev/null 2>&1; then
@@ -48,6 +44,5 @@ if [[ "${READY}" -ne 1 ]]; then
   exit 1
 fi
 
-cd /app/env
-echo "Starting uvicorn server..."
-exec uvicorn clickhouse_query_repair.server.app:app --host 0.0.0.0 --port 8000
+# Hand off to CMD
+exec "$@"
