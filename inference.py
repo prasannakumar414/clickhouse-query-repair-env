@@ -30,9 +30,9 @@ Emit exactly three line types to stdout, in order::
 
 Rules:
 
-- One ``[START]`` at episode begin.
+- One ``[START]`` at episode/task begin.
 - One ``[STEP]`` per ``env.step()``, immediately after it returns.
-- One ``[END]`` after ``env.close()``, always (including on exception).
+- One ``[END]`` per task (paired with its ``[START]``), always emitted.
 - ``reward``, ``rewards``, and aggregate ``score`` use two decimal places and stay in **[0.10, 0.90]** (strictly between 0 and 1; never ``0.00`` or ``1.00``).
 - ``done`` and ``success`` are lowercase ``true`` or ``false``.
 - ``error`` is the last ClickHouse / validation error string, or ``null``.
@@ -227,11 +227,6 @@ def _episode_task_ids() -> List[Optional[str]]:
 
 async def _run_episodes() -> None:
     _warn_if_missing_auth()
-    all_rewards: List[float] = []
-    steps_taken = 0
-    score = _reported_from_raw(0.0)
-    success = False
-    last_error: Optional[str] = None
     env: Optional[ClickhouseQueryRepairEnv] = None
 
     client = OpenAI(
@@ -256,102 +251,107 @@ async def _run_episodes() -> None:
 
         deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
         plan = _episode_task_ids()
-        num_episodes = len(plan)
-        episode_raw_scores: List[float] = []
-        solved_episodes = 0
 
-        for ep in range(1, num_episodes + 1):
+        for ep in range(1, len(plan) + 1):
             if time.monotonic() > deadline:
                 break
 
             fixed_id = plan[ep - 1]
             log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-            reset_kw: dict[str, str] = {}
-            if fixed_id is not None:
-                reset_kw["task_id"] = fixed_id
-            result = await env.reset(**reset_kw)
-            obs = result.observation
-            last_feedback = obs.feedback_message
-            ep_rewards: List[float] = []
+            ep_step_rewards: List[float] = []
+            ep_steps = 0
+            ep_score = _reported_from_raw(0.0)
+            ep_success = False
+            ep_error: Optional[str] = None
 
-            for step in range(1, MAX_STEPS + 1):
-                if time.monotonic() > deadline:
-                    break
-
-                user_prompt = build_user_prompt(
-                    obs.broken_query,
-                    obs.instruction,
-                    obs.schema_hint,
-                    obs.simulated_error,
-                    last_feedback,
-                    step,
-                )
-                sql = get_model_sql(client, user_prompt)
-                is_last = step == MAX_STEPS
-                action = ClickhouseQueryRepairAction(repaired_query=sql, submit_final=is_last)
-
-                result = await env.step(action)
+            try:
+                reset_kw: dict[str, str] = {}
+                if fixed_id is not None:
+                    reset_kw["task_id"] = fixed_id
+                result = await env.reset(**reset_kw)
                 obs = result.observation
-                md = obs.metadata or {}
-                raw_reward = min(
-                    max(
-                        float(
-                            md.get(
-                                "raw_reward",
-                                _raw_from_reported(_clamp_reported(obs.reward)),
-                            )
-                        ),
-                        0.0,
-                    ),
-                    1.0,
-                )
-                reward = _clamp_reported(obs.reward)
-                done = bool(result.done)
-                ep_rewards.append(raw_reward)
-                all_rewards.append(reward)
-                steps_taken += 1
-                last_error = obs.clickhouse_error
-
-                log_step(
-                    step=step,
-                    action=sql,
-                    reward=reward,
-                    done=done,
-                    error=last_error,
-                )
-
                 last_feedback = obs.feedback_message
-                if done:
-                    break
+                ep_raw_rewards: List[float] = []
 
-            solved_this_ep = bool(ep_rewards) and bool(
-                obs.gold_match or obs.result_match
-            )
-            raw_ep = (
-                1.0
-                if solved_this_ep
-                else (sum(ep_rewards) / max(len(ep_rewards), 1))
-            )
-            raw_ep = min(max(raw_ep, 0.0), 1.0)
-            episode_raw_scores.append(raw_ep)
-            if solved_this_ep:
-                solved_episodes += 1
+                for step in range(1, MAX_STEPS + 1):
+                    if time.monotonic() > deadline:
+                        break
 
-        if episode_raw_scores:
-            score = _reported_from_raw(
-                sum(episode_raw_scores) / len(episode_raw_scores)
+                    user_prompt = build_user_prompt(
+                        obs.broken_query,
+                        obs.instruction,
+                        obs.schema_hint,
+                        obs.simulated_error,
+                        last_feedback,
+                        step,
+                    )
+                    sql = get_model_sql(client, user_prompt)
+                    is_last = step == MAX_STEPS
+                    action = ClickhouseQueryRepairAction(repaired_query=sql, submit_final=is_last)
+
+                    result = await env.step(action)
+                    obs = result.observation
+                    md = obs.metadata or {}
+                    raw_reward = min(
+                        max(
+                            float(
+                                md.get(
+                                    "raw_reward",
+                                    _raw_from_reported(_clamp_reported(obs.reward)),
+                                )
+                            ),
+                            0.0,
+                        ),
+                        1.0,
+                    )
+                    reward = _clamp_reported(obs.reward)
+                    done = bool(result.done)
+                    ep_raw_rewards.append(raw_reward)
+                    ep_step_rewards.append(reward)
+                    ep_steps += 1
+                    ep_error = obs.clickhouse_error
+
+                    log_step(
+                        step=step,
+                        action=sql,
+                        reward=reward,
+                        done=done,
+                        error=ep_error,
+                    )
+
+                    last_feedback = obs.feedback_message
+                    if done:
+                        break
+
+                solved = bool(ep_raw_rewards) and bool(
+                    obs.gold_match or obs.result_match
+                )
+                raw_ep = (
+                    1.0
+                    if solved
+                    else (sum(ep_raw_rewards) / max(len(ep_raw_rewards), 1))
+                )
+                raw_ep = min(max(raw_ep, 0.0), 1.0)
+                ep_score = _reported_from_raw(raw_ep)
+                ep_success = solved
+
+            except Exception:  # noqa: BLE001
+                pass
+
+            log_end(
+                success=ep_success,
+                steps=ep_steps,
+                score=ep_score,
+                rewards=ep_step_rewards,
             )
-        success = solved_episodes == len(episode_raw_scores) and len(episode_raw_scores) > 0
-    except Exception:  # noqa: BLE001
-        pass
+
     finally:
         if env is not None:
             try:
                 await env.close()
             except Exception:  # noqa: BLE001
                 pass
-        log_end(success=success, steps=steps_taken, score=score, rewards=all_rewards)
 
 
 async def main() -> None:
