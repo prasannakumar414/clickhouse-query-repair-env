@@ -1,17 +1,63 @@
 <?xml version="1.0"?>
+<!--
+  Sandbox-optimised ClickHouse config for OpenEnv (shared container with uvicorn).
+  Goals: low memory, low threads, low file descriptors, no unnecessary services.
+-->
 <clickhouse>
+    <!-- ===== MEMORY ===== -->
+    <!-- Hard ceiling 3 GiB, also cap at 45% RAM — whichever is lower -->
     <max_server_memory_usage>3221225472</max_server_memory_usage>
     <max_server_memory_usage_to_ram_ratio>0.45</max_server_memory_usage_to_ram_ratio>
-    <max_concurrent_queries>16</max_concurrent_queries>
-    <background_pool_size>12</background_pool_size>
-    <mark_cache_size>536870912</mark_cache_size>
-    <uncompressed_cache_size>134217728</uncompressed_cache_size>
+    <max_thread_pool_size>100</max_thread_pool_size>
+    <max_thread_pool_free_size>10</max_thread_pool_free_size>
 
+    <!-- ===== CACHES ===== -->
+    <mark_cache_size>536870912</mark_cache_size>       <!-- 512 MiB -->
+    <uncompressed_cache_size>134217728</uncompressed_cache_size> <!-- 128 MiB -->
+    <compiled_expression_cache_size>0</compiled_expression_cache_size>
+    <query_cache><max_size_in_bytes>0</max_size_in_bytes></query_cache>
+
+    <!-- ===== CONCURRENCY ===== -->
+    <max_concurrent_queries>16</max_concurrent_queries>
+    <max_concurrent_insert_queries>4</max_concurrent_insert_queries>
+    <max_concurrent_select_queries>12</max_concurrent_select_queries>
+
+    <!-- ===== BACKGROUND POOLS ===== -->
+    <background_pool_size>4</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>1</background_merges_mutations_concurrency_ratio>
+    <background_schedule_pool_size>8</background_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>2</background_message_broker_schedule_pool_size>
+    <background_distributed_schedule_pool_size>2</background_distributed_schedule_pool_size>
+    <background_buffer_flush_schedule_pool_size>2</background_buffer_flush_schedule_pool_size>
+    <background_fetches_pool_size>2</background_fetches_pool_size>
+    <background_move_pool_size>2</background_move_pool_size>
+    <background_common_pool_size>4</background_common_pool_size>
+
+    <!-- ===== MERGE TREE ===== -->
     <merge_tree>
-        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>24</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+        <!-- Must be <= background_pool_size * background_merges_mutations_concurrency_ratio -->
+        <!-- 4 * 1 = 4, so set to 4 -->
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>4</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>4</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <max_bytes_to_merge_at_max_space_in_pool>1073741824</max_bytes_to_merge_at_max_space_in_pool> <!-- 1 GiB -->
+        <number_of_free_entries_in_pool_to_execute_mutation>4</number_of_free_entries_in_pool_to_execute_mutation>
     </merge_tree>
 
-    <background_schedule_pool_size>16</background_schedule_pool_size>
-    <background_message_broker_schedule_pool_size>4</background_message_broker_schedule_pool_size>
-    <background_distributed_schedule_pool_size>4</background_distributed_schedule_pool_size>
+    <!-- ===== LOGGING (reduce noise) ===== -->
+    <logger>
+        <level>warning</level>
+        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+        <size>50M</size>
+        <count>1</count>
+    </logger>
+
+    <!-- ===== DISABLE UNUSED SERVICES ===== -->
+    <prometheus><endpoint>/metrics</endpoint><port remove="1"/></prometheus>
+    <interserver_http_port remove="1"/>
+
+    <!-- ===== CRASH REPORTS (disable in sandbox) ===== -->
+    <send_crash_reports>
+        <enabled>false</enabled>
+    </send_crash_reports>
 </clickhouse>
