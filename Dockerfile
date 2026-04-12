@@ -91,6 +91,10 @@ RUN echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://pac
     apt-get install -y --no-install-recommends clickhouse-server clickhouse-client && \
     rm -rf /var/lib/apt/lists/*
 
+# Lower ClickHouse memory/concurrency defaults (merged via config.d) so the container
+# keeps RAM for uvicorn + OS; limits are min(3GiB, 45% RAM) to reduce OOM risk.
+COPY docker/clickhouse-resource-limits.xml /etc/clickhouse-server/config.d/99-resource-limits.xml
+
 # OpenEnv HTTP API + ClickHouse interfaces (map 8123/9000 only if you need host access).
 EXPOSE 8000 8123 9000
 

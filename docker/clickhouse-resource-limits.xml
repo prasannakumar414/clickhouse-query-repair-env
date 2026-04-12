@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!--
+  Caps ClickHouse in the shared container (OpenEnv + ClickHouse).
+  Effective limit is min(max_server_memory_usage, RAM * max_server_memory_usage_to_ram_ratio).
+  3 GiB ceiling + 45% RAM — leaves headroom for uvicorn and the OS without starving queries.
+-->
+<clickhouse>
+    <max_server_memory_usage>3221225472</max_server_memory_usage>
+    <max_server_memory_usage_to_ram_ratio>0.45</max_server_memory_usage_to_ram_ratio>
+    <max_concurrent_queries>16</max_concurrent_queries>
+    <background_pool_size>12</background_pool_size>
+    <mark_cache_size>536870912</mark_cache_size>
+    <uncompressed_cache_size>134217728</uncompressed_cache_size>
+</clickhouse>
