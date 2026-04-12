@@ -83,11 +83,24 @@ RUN echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://pac
         > /etc/apt/sources.list.d/clickhouse.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends clickhouse-server clickhouse-client && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    # Pre-create dirs with correct ownership so entrypoint needs no CAP_CHOWN
+    mkdir -p /var/lib/clickhouse \
+             /var/log/clickhouse-server \
+             /var/run/clickhouse-server \
+             /var/lib/clickhouse/access && \
+    chown -R clickhouse:clickhouse \
+        /var/lib/clickhouse \
+        /var/log/clickhouse-server \
+        /var/run/clickhouse-server \
+        /etc/clickhouse-server
+
 
 # Lower ClickHouse memory/concurrency defaults (merged via config.d) so the container
 # keeps RAM for uvicorn + OS; limits are min(3GiB, 45% RAM) to reduce OOM risk.
 COPY docker/clickhouse-resource-limits.xml /etc/clickhouse-server/config.d/99-resource-limits.xml
+
+RUN chown clickhouse:clickhouse /etc/clickhouse-server/config.d/99-resource-limits.xml
 
 # Copy the virtual environment from builder
 COPY --from=builder /app/env/.venv /app/.venv
@@ -103,6 +116,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV CLICKHOUSE_HOST=127.0.0.1 \
     CLICKHOUSE_HTTP_PORT=8123 \
-    CHQR_MAX_STEPS_PER_EPISODE=8
+    CHQR_MAX_STEPS_PER_EPISODE=8 \
+    CLICKHOUSE_WATCHDOG_ENABLE=0
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -1,61 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONUNBUFFERED=1
+export CLICKHOUSE_WATCHDOG_ENABLE=0
+
 CH_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
 CH_CONFIG="${CLICKHOUSE_CONFIG:-/etc/clickhouse-server/config.xml}"
 
-export PYTHONUNBUFFERED=1   # ← fix #2: forces Python/uvicorn to flush immediately
-
 rm -f /var/run/clickhouse-server/clickhouse-server.pid 2>/dev/null || true
-mkdir -p /var/lib/clickhouse /var/log/clickhouse-server /var/run/clickhouse-server
 
-if id clickhouse &>/dev/null; then
-  chown -R clickhouse:clickhouse \
-    /var/lib/clickhouse /var/log/clickhouse-server /var/run/clickhouse-server 2>/dev/null || true
-fi
+# Tail logs to stdout (dirs and files already exist with correct ownership)
+tail -F \
+  /var/log/clickhouse-server/clickhouse-server.log \
+  /var/log/clickhouse-server/clickhouse-server.err.log 2>/dev/null &
 
-dump_ch_logs() {
-  echo "--- tail clickhouse-server.err.log ---" >&2
-  tail -n 80 /var/log/clickhouse-server/clickhouse-server.err.log 2>/dev/null || true
-  echo "--- tail clickhouse-server.log ---" >&2
-  tail -n 40 /var/log/clickhouse-server/clickhouse-server.log 2>/dev/null || true
-}
+# Remove the > redirects from all three branches — let CH manage its own files
+# Try to switch to clickhouse user; fall back to running as current user (root)
+# in sandboxed envs where setuid/setgid caps are dropped
+CLICKHOUSE_CMD="clickhouse-server --config-file=${CH_CONFIG}"
 
-# ← fix #1: stream ClickHouse logs to docker stdout in the background
-stream_ch_logs() {
-  mkdir -p /var/log/clickhouse-server
-  touch /var/log/clickhouse-server/clickhouse-server.log \
-        /var/log/clickhouse-server/clickhouse-server.err.log
-
-  # ← ADD THIS: give clickhouse user ownership before tail locks the files
-  if id clickhouse &>/dev/null; then
-    chown clickhouse:clickhouse \
-      /var/log/clickhouse-server/clickhouse-server.log \
-      /var/log/clickhouse-server/clickhouse-server.err.log
-  fi
-
-  tail -F \
-    /var/log/clickhouse-server/clickhouse-server.log \
-    /var/log/clickhouse-server/clickhouse-server.err.log 2>/dev/null &
-}
-
-stream_ch_logs
-
-if id clickhouse &>/dev/null; then
-  if command -v runuser >/dev/null 2>&1; then
-    runuser -u clickhouse -- clickhouse-server --config-file="${CH_CONFIG}" \
-      >/var/log/clickhouse-server/clickhouse-server.log \
-      2>/var/log/clickhouse-server/clickhouse-server.err.log &
+if id clickhouse &>/dev/null && command -v runuser >/dev/null 2>&1; then
+  if runuser -u clickhouse -- echo ok >/dev/null 2>&1; then
+    runuser -u clickhouse -- ${CLICKHOUSE_CMD} &
   else
-    su -s /bin/sh clickhouse -c \
-      "exec clickhouse-server --config-file=${CH_CONFIG} \
-       >>/var/log/clickhouse-server/clickhouse-server.log \
-       2>>/var/log/clickhouse-server/clickhouse-server.err.log" &
+    echo "Warning: cannot switch to clickhouse user, running as $(whoami)" >&2
+    ${CLICKHOUSE_CMD} &
   fi
 else
-  clickhouse-server --config-file="${CH_CONFIG}" \
-    >/var/log/clickhouse-server/clickhouse-server.log \
-    2>/var/log/clickhouse-server/clickhouse-server.err.log &
+  ${CLICKHOUSE_CMD} &
 fi
 
 echo "Waiting for ClickHouse on port ${CH_HTTP_PORT}..."
@@ -71,7 +43,8 @@ done
 
 if [[ "${READY}" -ne 1 ]]; then
   echo "ClickHouse did not respond within 120s." >&2
-  dump_ch_logs
+  tail -n 80 /var/log/clickhouse-server/clickhouse-server.err.log >&2 || true
+  tail -n 40 /var/log/clickhouse-server/clickhouse-server.log >&2 || true
   exit 1
 fi
 
