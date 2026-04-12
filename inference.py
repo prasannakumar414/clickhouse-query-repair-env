@@ -33,7 +33,7 @@ Rules:
 - One ``[START]`` at episode begin.
 - One ``[STEP]`` per ``env.step()``, immediately after it returns.
 - One ``[END]`` after ``env.close()``, always (including on exception).
-- ``reward``, ``rewards``, and aggregate ``score`` use two decimal places and are **strictly between 0 and 1** (never ``0.00`` or ``1.00``).
+- ``reward``, ``rewards``, and aggregate ``score`` use two decimal places and stay in **[0.10, 0.90]** (strictly between 0 and 1; never ``0.00`` or ``1.00``).
 - ``done`` and ``success`` are lowercase ``true`` or ``false``.
 - ``error`` is the last ClickHouse / validation error string, or ``null``.
 - Single line per record; no embedded newlines in fields.
@@ -80,13 +80,13 @@ INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
 
-# Reported rewards use ``0.01 + 0.98 * raw`` with ``raw`` in ``[0, 1]`` (open interval on stdout).
-_OPEN_LO = 0.01
-_OPEN_HI = 0.99
+# Reported rewards use ``0.1 + 0.8 * raw`` with ``raw`` in ``[0, 1]`` (stdout in ``[0.10, 0.90]``).
+_OPEN_LO = 0.1
+_OPEN_HI = 0.9
 
 
 def _clamp_reported(x: Optional[float]) -> float:
-    """Clamp API ``reward`` to reported range ``(0, 1)`` (implemented as ``[0.01, 0.99]``)."""
+    """Clamp API ``reward`` to reported range ``[0.1, 0.9]``."""
     if x is None:
         return _OPEN_LO
     try:
@@ -99,15 +99,15 @@ def _clamp_reported(x: Optional[float]) -> float:
 
 
 def _reported_from_raw(raw: float) -> float:
-    """Same mapping as the environment: internal ``[0, 1]`` -> reported ``(0, 1)``."""
+    """Same mapping as the environment: internal ``[0, 1]`` -> reported ``[0.1, 0.9]``."""
     x = min(max(float(raw), 0.0), 1.0)
-    return _clamp_reported(0.01 + 0.98 * x)
+    return _clamp_reported(0.1 + 0.8 * x)
 
 
 def _raw_from_reported(rep: float) -> float:
     """Invert reported reward when ``metadata.raw_reward`` is missing."""
     o = _clamp_reported(rep)
-    return min(max((o - 0.01) / 0.98, 0.0), 1.0)
+    return min(max((o - 0.1) / 0.8, 0.0), 1.0)
 
 
 def _fmt_stdout_reward(v: float) -> str:
@@ -115,9 +115,9 @@ def _fmt_stdout_reward(v: float) -> str:
     x = _clamp_reported(v)
     s = f"{x:.2f}"
     if s == "0.00":
-        return "0.01"
+        return "0.10"
     if s == "1.00":
-        return "0.99"
+        return "0.90"
     return s
 
 SYSTEM_PROMPT = textwrap.dedent(

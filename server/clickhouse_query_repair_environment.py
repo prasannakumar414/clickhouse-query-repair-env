@@ -49,10 +49,10 @@ _W_RESULT = 0.70
 
 
 def _reported_reward_from_raw(raw: float) -> float:
-    """Map internal grader score in ``[0, 1]`` to ``Observation.reward`` strictly in ``(0, 1)``."""
+    """Map internal grader score in ``[0, 1]`` to ``Observation.reward`` in ``[0.1, 0.9]``."""
     x = min(max(float(raw), 0.0), 1.0)
-    v = round(0.01 + 0.98 * x, 4)
-    return min(max(v, 0.01), 0.99)
+    v = round(0.1 + 0.8 * x, 4)
+    return min(max(v, 0.1), 0.9)
 
 
 class ClickhouseQueryRepairEnvironment(Environment):
@@ -63,7 +63,7 @@ class ClickhouseQueryRepairEnvironment(Environment):
 
     Internally, each step gets a deterministic score in ``[0.0, 1.0]`` from weighted
     signals (partial progress toward the gold query).  The reported ``reward`` is always
-    strictly between 0 and 1 (``0.01 + 0.98 * raw``, clamped).  ``metadata.raw_reward``
+    in ``[0.1, 0.9]`` (``0.1 + 0.8 * raw``, clamped).  ``metadata.raw_reward``
     keeps the internal ``[0, 1]`` value (``1.0`` => solved).  Extra fields use
     ``Observation.metadata`` (OpenEnv’s ``info``-style payload).
     """
@@ -183,12 +183,12 @@ class ClickhouseQueryRepairEnvironment(Environment):
     ) -> Tuple[float, Optional[bool], Optional[str], Optional[bool], Optional[bool], str]:
         """
         Internal grader score in ``[0.0, 1.0]`` (stored as ``raw_reward`` in metadata; the
-        HTTP ``reward`` field is mapped to ``(0, 1)`` by the caller):
+        HTTP ``reward`` field is mapped to ``[0.1, 0.9]`` by the caller):
 
             raw = W_SQL * sql_sim + W_TERMS * terms_frac
                 + W_EXEC * exec_ok + W_RESULT * result_sim
 
-        Exact result match overrides raw to ``1.0`` (reported reward ~0.99).
+        Exact result match overrides raw to ``1.0`` (reported reward ``0.9``).
         Returns (raw_reward, execution_ok, ch_error, gold_match, result_match, feedback).
         """
         tok_sim = sql_token_similarity(candidate, gold)

@@ -16,7 +16,7 @@ class ClickhouseQueryRepairAction(Action):
     """Agent submits a SQL string; set submit_final when grading should run (once per episode)."""
 
     repaired_query: str = Field(
-        ...,
+        default="",
         description="Draft or final repaired ClickHouse SQL (SELECT for validation)",
     )
     submit_final: bool = Field(
