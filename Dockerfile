@@ -59,12 +59,6 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-# Copy the virtual environment from builder
-COPY --from=builder /app/env/.venv /app/.venv
-
-# Copy the environment code
-COPY --from=builder /app/env /app/env
-
 # Set PATH to use the virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
 
@@ -95,12 +89,14 @@ RUN echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://pac
 # keeps RAM for uvicorn + OS; limits are min(3GiB, 45% RAM) to reduce OOM risk.
 COPY docker/clickhouse-resource-limits.xml /etc/clickhouse-server/config.d/99-resource-limits.xml
 
+# Copy the virtual environment from builder
+COPY --from=builder /app/env/.venv /app/.venv
+
+# Copy the environment code
+COPY --from=builder /app/env /app/env
+
 # OpenEnv HTTP API + ClickHouse interfaces (map 8123/9000 only if you need host access).
 EXPOSE 8000 8123 9000
-
-# Health check: allow time for ClickHouse + uvicorn startup
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
-    CMD curl -sf http://localhost:8000/health || exit 1
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
