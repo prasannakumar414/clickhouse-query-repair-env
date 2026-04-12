@@ -154,8 +154,7 @@ def get_model_sql(client: OpenAI, user_prompt: str) -> str:
         for fence in ("```sql", "```"):
             text = text.replace(fence, "")
         return text.strip()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[DEBUG] LLM call failed: {exc}", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001
         return "SELECT 1"
 
 
@@ -182,7 +181,6 @@ def _episode_task_ids() -> List[Optional[str]]:
 
 
 async def _run_episodes() -> None:
-    print(f"[DEBUG] Running episodes...",flush=True)
     _warn_if_missing_auth()
     client = OpenAI(
         base_url=API_BASE_URL,
@@ -193,14 +191,11 @@ async def _run_episodes() -> None:
     env = None
     try:
         if IMAGE_NAME:
-            print(f"[DEBUG] Creating environment from image: {IMAGE_NAME}", file=sys.stderr, flush=True)
             env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
         else:
             base = "https://prasannakumar414-clickhouse-query-repair.hf.space/web"
-            print(f"[DEBUG] Creating environment from base URL: {base}", file=sys.stderr, flush=True)
             env = ClickhouseQueryRepairEnv(base_url=base)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[DEBUG] Failed to create environment: {exc}", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001
         return
 
     all_rewards: List[float] = []
@@ -217,11 +212,6 @@ async def _run_episodes() -> None:
     try:
         for ep in range(1, num_episodes + 1):
             if time.monotonic() > deadline:
-                print(
-                    "[DEBUG] INFERENCE_MAX_SECONDS budget exceeded; stopping run.",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 break
 
             fixed_id = plan[ep - 1]
@@ -237,11 +227,6 @@ async def _run_episodes() -> None:
 
             for step in range(1, MAX_STEPS + 1):
                 if time.monotonic() > deadline:
-                    print(
-                        "[DEBUG] INFERENCE_MAX_SECONDS budget exceeded; stopping episode.",
-                        file=sys.stderr,
-                        flush=True,
-                    )
                     break
 
                 user_prompt = build_user_prompt(
@@ -291,14 +276,13 @@ async def _run_episodes() -> None:
         if episode_raw_scores:
             score = _display_score(sum(episode_raw_scores) / len(episode_raw_scores))
         success = solved_episodes == len(episode_raw_scores) and len(episode_raw_scores) > 0
-    except Exception as exc:  # noqa: BLE001
-        print(f"[DEBUG] Failed to run episodes: {exc}", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001
         return
     finally:
         try:
             await env.close()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[DEBUG] env.close(): {exc}", file=sys.stderr, flush=True)
+        except Exception:  # noqa: BLE001
+            pass
         log_end(success=success, steps=steps_taken, score=score, rewards=all_rewards)
 
 
