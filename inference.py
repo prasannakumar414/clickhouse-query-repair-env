@@ -32,11 +32,11 @@ Rules:
 - One [START] at episode begin.
 - One [STEP] per ``env.step()``, immediately after it returns.
 - One [END] after ``env.close()``, always (including on errors).
-- ``reward`` and each reward in ``rewards`` use two decimal places and lie strictly between 0 and 1.
+- ``reward`` and each reward in ``rewards`` use two decimal places and lie in ``[0.1, 0.9]``.
 - ``done`` and ``success`` are lowercase ``true`` or ``false``.
 - ``error`` is the last error string, or the literal ``null``.
 - Single line per record; no embedded newlines in fields.
-- Normalized ``score`` is strictly between 0 and 1 (never exactly 0.00 or 1.00).
+- Normalized ``score`` is in ``[0.1, 0.9]`` (same mapping as step rewards).
 
 Infra: default wall-clock budget under 20 minutes; tune ``INFERENCE_MAX_SECONDS``; targets ~2 vCPU / 8 GiB.
 
@@ -79,16 +79,34 @@ INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
 
-# Map aggregate raw scores in [0, 1] to (0, 1) for [END] stdout (0.01 … 0.99).
-# Per-step rewards from the environment are already in (0, 1).
+# Reported reward/score bounds (map internal [0, 1] with ``0.1 + 0.8 * raw``).
+_OPEN_LO = 0.1
+_OPEN_HI = 0.9
+
+
+def _clamp_open_stdout(x: Optional[float]) -> float:
+    """Clamp any reported reward/score to ``[0.1, 0.9]`` for logging."""
+    if x is None:
+        return _OPEN_LO
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return _OPEN_LO
+    if v != v:  # NaN
+        return _OPEN_LO
+    return min(max(v, _OPEN_LO), _OPEN_HI)
+
+
+# Map aggregate raw scores in [0, 1] to [0.1, 0.9] for [END] stdout.
 def _display_score(raw: float) -> float:
     x = min(max(float(raw), 0.0), 1.0)
-    return 0.01 + 0.98 * x
+    return _clamp_open_stdout(0.1 + 0.8 * x)
 
 
 def _raw_from_open_reward(open_r: float) -> float:
-    """Invert env mapping ``0.01 + 0.98 * raw`` when ``metadata.raw_reward`` is absent."""
-    return min(max((float(open_r) - 0.01) / 0.98, 0.0), 1.0)
+    """Invert env mapping ``0.1 + 0.8 * raw`` when ``metadata.raw_reward`` is absent."""
+    o = _clamp_open_stdout(open_r)
+    return min(max((o - 0.1) / 0.8, 0.0), 1.0)
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -249,19 +267,20 @@ async def _run_episodes() -> None:
                 result = await env.step(action)
                 obs = result.observation
                 md = obs.metadata or {}
+                open_r = _clamp_open_stdout(obs.reward)
                 raw_reward = min(
                     max(
                         float(
                             md.get(
                                 "raw_reward",
-                                _raw_from_open_reward(float(obs.reward or 0.0)),
+                                _raw_from_open_reward(open_r),
                             )
                         ),
                         0.0,
                     ),
                     1.0,
                 )
-                reward = float(obs.reward or 0.0)
+                reward = open_r
                 done = bool(result.done)
                 ep_rewards.append(raw_reward)
                 all_rewards.append(reward)
