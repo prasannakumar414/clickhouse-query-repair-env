@@ -79,11 +79,16 @@ INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
 
-# Map raw rewards/scores in [0, 1] to (0, 1) for stdout so values are never exactly 0.00 or 1.00
-# with two decimal places (uses 0.01 … 0.99).
+# Map aggregate raw scores in [0, 1] to (0, 1) for [END] stdout (0.01 … 0.99).
+# Per-step rewards from the environment are already in (0, 1).
 def _display_score(raw: float) -> float:
     x = min(max(float(raw), 0.0), 1.0)
     return 0.01 + 0.98 * x
+
+
+def _raw_from_open_reward(open_r: float) -> float:
+    """Invert env mapping ``0.01 + 0.98 * raw`` when ``metadata.raw_reward`` is absent."""
+    return min(max((float(open_r) - 0.01) / 0.98, 0.0), 1.0)
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -243,8 +248,20 @@ async def _run_episodes() -> None:
 
                 result = await env.step(action)
                 obs = result.observation
-                raw_reward = min(max(float(result.reward or 0.0), 0.0), 1.0)
-                reward = _display_score(raw_reward)
+                md = obs.metadata or {}
+                raw_reward = min(
+                    max(
+                        float(
+                            md.get(
+                                "raw_reward",
+                                _raw_from_open_reward(float(obs.reward or 0.0)),
+                            )
+                        ),
+                        0.0,
+                    ),
+                    1.0,
+                )
+                reward = float(obs.reward or 0.0)
                 done = bool(result.done)
                 ep_rewards.append(raw_reward)
                 all_rewards.append(reward)
@@ -263,14 +280,17 @@ async def _run_episodes() -> None:
                 if done:
                     break
 
+            solved_this_ep = bool(ep_rewards) and bool(
+                obs.gold_match or obs.result_match
+            )
             raw_ep = (
                 1.0
-                if ep_rewards and ep_rewards[-1] >= 0.99
+                if solved_this_ep
                 else (sum(ep_rewards) / max(len(ep_rewards), 1))
             )
             raw_ep = min(max(raw_ep, 0.0), 1.0)
             episode_raw_scores.append(raw_ep)
-            if ep_rewards and ep_rewards[-1] >= 0.99:
+            if solved_this_ep:
                 solved_episodes += 1
 
         if episode_raw_scores:

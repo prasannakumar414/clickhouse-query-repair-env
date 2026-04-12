@@ -48,20 +48,28 @@ _W_EXEC = 0.10
 _W_RESULT = 0.70
 
 
+def _open_unit_interval_reward(raw: float) -> float:
+    """Map internal score in [0, 1] to (0, 1) for observations (never exactly 0 or 1)."""
+    x = min(max(float(raw), 0.0), 1.0)
+    return round(0.01 + 0.98 * x, 4)
+
+
 class ClickhouseQueryRepairEnvironment(Environment):
     """
     Sample a repair task on reset.  Every step is evaluated against ClickHouse
     (gated by local safety checks).  Episode auto-terminates on exact gold match
-    (reward 1.0) or when max steps are hit.
+    or when max steps are hit.
 
-    Reward is a continuous decimal in [0.0, 1.0] computed from four signals:
+    Reported ``reward`` is always strictly between 0 and 1 (open interval), mapped
+    from an internal [0, 1] score via ``0.01 + 0.98 * raw``.  Internally, the
+    raw score blends four signals:
 
         sql_token_similarity   (weight 0.15) -- Jaccard overlap of SQL tokens
         required_terms_fraction(weight 0.05) -- fraction of task-mandated CH keywords
         execution_success      (weight 0.10) -- binary: runs without error
         result_set_similarity  (weight 0.70) -- row-count, row-match, cell overlap
 
-    Exact result match => reward = 1.0 (episode ends).
+    Exact result match => internal raw 1.0 (reported reward ~0.99; episode ends).
     """
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
@@ -124,9 +132,9 @@ class ClickhouseQueryRepairEnvironment(Environment):
             step_index=0,
             max_steps=self._max_steps,
             terminal=False,
-            reward=0.0,
+            reward=_open_unit_interval_reward(0.0),
             done=False,
-            metadata=self._task_meta(),
+            metadata={**self._task_meta(), "raw_reward": 0.0},
         )
 
     def step(self, action: ClickhouseQueryRepairAction) -> ClickhouseQueryRepairObservation:  # type: ignore[override]
@@ -140,12 +148,13 @@ class ClickhouseQueryRepairEnvironment(Environment):
         gold = str(task["gold_query"])
         required_terms: Optional[List[str]] = task.get("required_terms")
 
-        reward, exec_ok, ch_err, gold_match, result_match, feedback = (
+        raw_reward, exec_ok, ch_err, gold_match, result_match, feedback = (
             self._evaluate_step(sql, gold, required_terms)
         )
+        reward = _open_unit_interval_reward(raw_reward)
 
         is_last_step = self._steps_taken >= self._max_steps
-        done = (reward >= 1.0) or is_last_step
+        done = (raw_reward >= 1.0) or is_last_step
 
         return ClickhouseQueryRepairObservation(
             broken_query=str(task["broken_query"]),
@@ -163,7 +172,11 @@ class ClickhouseQueryRepairEnvironment(Environment):
             result_match=result_match,
             reward=reward,
             done=done,
-            metadata={**self._task_meta(), "normalized_match": gold_match},
+            metadata={
+                **self._task_meta(),
+                "normalized_match": gold_match,
+                "raw_reward": raw_reward,
+            },
         )
 
     def _evaluate_step(
@@ -173,21 +186,21 @@ class ClickhouseQueryRepairEnvironment(Environment):
         required_terms: Optional[List[str]],
     ) -> Tuple[float, Optional[bool], Optional[str], Optional[bool], Optional[bool], str]:
         """
-        Compute a continuous reward in [0.0, 1.0]:
+        Compute an internal score in [0.0, 1.0] (mapped to (0, 1) by the caller):
 
-            reward = W_SQL * sql_sim + W_TERMS * terms_frac
-                   + W_EXEC * exec_ok + W_RESULT * result_sim
+            raw = W_SQL * sql_sim + W_TERMS * terms_frac
+                + W_EXEC * exec_ok + W_RESULT * result_sim
 
-        Exact result match overrides to 1.0.
-        Returns (reward, execution_ok, ch_error, gold_match, result_match, feedback).
+        Exact result match overrides internal raw to 1.0.
+        Returns (raw_reward, execution_ok, ch_error, gold_match, result_match, feedback).
         """
         tok_sim = sql_token_similarity(candidate, gold)
         terms_frac = required_terms_fraction(candidate, required_terms)
 
         if not is_safe_select(candidate):
             fb = local_sql_feedback(candidate)
-            reward = round(_W_SQL_SIM * tok_sim, 4)
-            return reward, False, fb, False, False, fb
+            raw = round(_W_SQL_SIM * tok_sim, 4)
+            return raw, False, fb, False, False, fb
 
         terms_msg = check_required_terms(candidate, required_terms)
         feedback_parts: List[str] = []
@@ -196,8 +209,8 @@ class ClickhouseQueryRepairEnvironment(Environment):
 
         c_rows, c_err = run_select_query(candidate)
         if c_err:
-            reward = round(_W_SQL_SIM * tok_sim + _W_TERMS * terms_frac, 4)
-            return reward, False, c_err, False, False, f"ClickHouse error: {c_err}"
+            raw = round(_W_SQL_SIM * tok_sim + _W_TERMS * terms_frac, 4)
+            return raw, False, c_err, False, False, f"ClickHouse error: {c_err}"
 
         g_rows, g_err = run_select_query(gold)
         if g_err:
@@ -211,19 +224,20 @@ class ClickhouseQueryRepairEnvironment(Environment):
             return 1.0, True, None, gm, rm, "Correct! Result matches the gold query."
 
         res_sim = result_set_similarity(c_rows, g_rows)
-        reward = (
+        raw = (
             _W_SQL_SIM * tok_sim
             + _W_TERMS * terms_frac
             + _W_EXEC * 1.0
             + _W_RESULT * res_sim
         )
-        reward = round(min(max(reward, 0.0), 0.99), 4)
+        raw = round(min(max(raw, 0.0), 0.99), 4)
+        shown = _open_unit_interval_reward(raw)
 
         feedback_parts.append(
             f"Query executed but result differs from expected "
-            f"(sql_sim={tok_sim:.2f}, result_sim={res_sim:.2f}, reward={reward:.2f})."
+            f"(sql_sim={tok_sim:.2f}, result_sim={res_sim:.2f}, reward={shown:.2f})."
         )
-        return reward, True, None, False, False, " ".join(feedback_parts)
+        return raw, True, None, False, False, " ".join(feedback_parts)
 
     @property
     def state(self) -> State:
