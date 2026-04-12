@@ -32,11 +32,11 @@ Rules:
 - One [START] at episode begin.
 - One [STEP] per ``env.step()``, immediately after it returns.
 - One [END] after ``env.close()``, always (including on errors).
-- ``reward`` and each reward in ``rewards`` use two decimal places and lie in ``[0.1, 0.9]``.
+- ``reward`` and each reward in ``rewards`` use two decimal places and are strictly between 0 and 1 (never ``0.00`` or ``1.00`` when printed).
 - ``done`` and ``success`` are lowercase ``true`` or ``false``.
 - ``error`` is the last error string, or the literal ``null``.
 - Single line per record; no embedded newlines in fields.
-- Normalized ``score`` is in ``[0.1, 0.9]`` (same mapping as step rewards).
+- Normalized ``score`` follows the same rule (open unit interval, implemented as ``0.01..0.99``).
 
 Infra: default wall-clock budget under 20 minutes; tune ``INFERENCE_MAX_SECONDS``; targets ~2 vCPU / 8 GiB.
 
@@ -79,13 +79,13 @@ INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
 
-# Reported reward/score bounds (map internal [0, 1] with ``0.1 + 0.8 * raw``).
-_OPEN_LO = 0.1
-_OPEN_HI = 0.9
+# Open unit interval for stdout/API: internal raw in [0,1] -> ``0.01 + 0.98 * raw``.
+_OPEN_LO = 0.01
+_OPEN_HI = 0.99
 
 
 def _clamp_open_stdout(x: Optional[float]) -> float:
-    """Clamp any reported reward/score to ``[0.1, 0.9]`` for logging."""
+    """Clamp reported reward/score to (0, 1), implemented as ``[0.01, 0.99]``."""
     if x is None:
         return _OPEN_LO
     try:
@@ -97,16 +97,27 @@ def _clamp_open_stdout(x: Optional[float]) -> float:
     return min(max(v, _OPEN_LO), _OPEN_HI)
 
 
-# Map aggregate raw scores in [0, 1] to [0.1, 0.9] for [END] stdout.
+def _fmt_stdout_reward(v: float) -> str:
+    """Two decimal places; never ``0.00`` or ``1.00`` (submission validators)."""
+    x = _clamp_open_stdout(v)
+    s = f"{x:.2f}"
+    if s == "0.00":
+        return "0.01"
+    if s == "1.00":
+        return "0.99"
+    return s
+
+
+# Map aggregate raw scores in [0, 1] to (0, 1) for [END] stdout.
 def _display_score(raw: float) -> float:
     x = min(max(float(raw), 0.0), 1.0)
-    return _clamp_open_stdout(0.1 + 0.8 * x)
+    return _clamp_open_stdout(0.01 + 0.98 * x)
 
 
 def _raw_from_open_reward(open_r: float) -> float:
-    """Invert env mapping ``0.1 + 0.8 * raw`` when ``metadata.raw_reward`` is absent."""
+    """Invert env mapping ``0.01 + 0.98 * raw`` when ``metadata.raw_reward`` is absent."""
     o = _clamp_open_stdout(open_r)
-    return min(max((o - 0.1) / 0.8, 0.0), 1.0)
+    return min(max((o - 0.01) / 0.98, 0.0), 1.0)
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -127,15 +138,20 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     done_val = str(done).lower()
     safe_action = " ".join(str(action).split())
     print(
-        f"[STEP] step={step} action={safe_action} reward={reward:.2f} done={done_val} error={error_val}",
+        f"[STEP] step={step} action={safe_action} reward={_fmt_stdout_reward(reward)} "
+        f"done={done_val} error={error_val}",
         flush=True,
     )
 
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    if not rewards:
+        rewards_str = _fmt_stdout_reward(_OPEN_LO)
+    else:
+        rewards_str = ",".join(_fmt_stdout_reward(r) for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={_fmt_stdout_reward(score)} "
+        f"rewards={rewards_str}",
         flush=True,
     )
 
@@ -205,34 +221,39 @@ def _episode_task_ids() -> List[Optional[str]]:
 
 async def _run_episodes() -> None:
     _warn_if_missing_auth()
+    all_rewards: List[float] = []
+    steps_taken = 0
+    score = _display_score(0.0)
+    success = False
+    last_error: Optional[str] = None
+    env: Optional[ClickhouseQueryRepairEnv] = None
+
     client = OpenAI(
         base_url=API_BASE_URL,
         api_key=API_KEY,
         timeout=120.0,
         max_retries=2,
     )
-    env = None
-    try:
-        if IMAGE_NAME:
-            env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
-        else:
-            base = "https://prasannakumar414-clickhouse-query-repair.hf.space"
-            env = ClickhouseQueryRepairEnv(base_url=base)
-    except Exception:  # noqa: BLE001
-        return
-
-    all_rewards: List[float] = []
-    steps_taken = 0
-    score = _display_score(0.0)
-    success = False
-    last_error: Optional[str] = None
-    deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
-    plan = _episode_task_ids()
-    num_episodes = 1 #len(plan)
-    episode_raw_scores: List[float] = []
-    solved_episodes = 0
 
     try:
+        try:
+            if IMAGE_NAME:
+                env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
+            else:
+                base = "https://prasannakumar414-clickhouse-query-repair.hf.space"
+                env = ClickhouseQueryRepairEnv(base_url=base)
+        except Exception:  # noqa: BLE001
+            env = None
+
+        if env is None:
+            return
+
+        deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
+        plan = _episode_task_ids()
+        num_episodes = len(plan)
+        episode_raw_scores: List[float] = []
+        solved_episodes = 0
+
         for ep in range(1, num_episodes + 1):
             if time.monotonic() > deadline:
                 break
@@ -316,12 +337,13 @@ async def _run_episodes() -> None:
             score = _display_score(sum(episode_raw_scores) / len(episode_raw_scores))
         success = solved_episodes == len(episode_raw_scores) and len(episode_raw_scores) > 0
     except Exception:  # noqa: BLE001
-        return
+        pass
     finally:
-        try:
-            await env.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if env is not None:
+            try:
+                await env.close()
+            except Exception:  # noqa: BLE001
+                pass
         log_end(success=success, steps=steps_taken, score=score, rewards=all_rewards)
 
 

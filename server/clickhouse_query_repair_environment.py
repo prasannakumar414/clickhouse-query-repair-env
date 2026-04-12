@@ -49,10 +49,10 @@ _W_RESULT = 0.70
 
 
 def _open_unit_interval_reward(raw: float) -> float:
-    """Map internal score in [0, 1] to [0.1, 0.9] for observations."""
+    """Map internal [0, 1] score to (0, 1) for API/observation (never exactly 0.0 or 1.0)."""
     x = min(max(float(raw), 0.0), 1.0)
-    v = round(0.1 + 0.8 * x, 4)
-    return min(max(v, 0.1), 0.9)
+    v = round(0.01 + 0.98 * x, 4)
+    return min(max(v, 0.01), 0.99)
 
 
 class ClickhouseQueryRepairEnvironment(Environment):
@@ -61,8 +61,8 @@ class ClickhouseQueryRepairEnvironment(Environment):
     (gated by local safety checks).  Episode auto-terminates on exact gold match
     or when max steps are hit.
 
-    Reported ``reward`` is always in ``[0.1, 0.9]``, mapped from an internal [0, 1]
-    score via ``0.1 + 0.8 * raw``.  Internally, the
+    Reported ``reward`` is always strictly between 0 and 1 (implemented as
+    ``0.01 + 0.98 * raw`` with clamp ``[0.01, 0.99]``).  Internally, the
     raw score blends four signals:
 
         sql_token_similarity   (weight 0.15) -- Jaccard overlap of SQL tokens
@@ -70,7 +70,7 @@ class ClickhouseQueryRepairEnvironment(Environment):
         execution_success      (weight 0.10) -- binary: runs without error
         result_set_similarity  (weight 0.70) -- row-count, row-match, cell overlap
 
-    Exact result match => internal raw 1.0 (reported reward 0.9; episode ends).
+    Exact result match => internal raw 1.0 (reported reward 0.99; episode ends).
     """
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
