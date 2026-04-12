@@ -62,7 +62,7 @@ from openai import OpenAI
 from clickhouse_query_repair import ClickhouseQueryRepairAction
 from clickhouse_query_repair.client import ClickhouseQueryRepairEnv
 
-IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME") or "prasannakumar08/clickhouse_query_repair_env:latest"
+IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
@@ -175,6 +175,7 @@ def _episode_task_ids() -> List[Optional[str]]:
 
 
 async def _run_episodes() -> None:
+    print(f"[DEBUG] Running episodes...",flush=True)
     _warn_if_missing_auth()
     client = OpenAI(
         base_url=API_BASE_URL,
@@ -182,12 +183,18 @@ async def _run_episodes() -> None:
         timeout=120.0,
         max_retries=2,
     )
-
-    if IMAGE_NAME:
-        env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
-    else:
-        base = os.getenv("CHQR_BASE_URL", "http://127.0.0.1:8000")
-        env = ClickhouseQueryRepairEnv(base_url=base)
+    env = None
+    try:
+        if IMAGE_NAME:
+            print(f"[DEBUG] Creating environment from image: {IMAGE_NAME}", file=sys.stderr, flush=True)
+            env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
+        else:
+            base = os.getenv("CHQR_BASE_URL", "http://127.0.0.1:8000")
+            print(f"[DEBUG] Creating environment from base URL: {base}", file=sys.stderr, flush=True)
+            env = ClickhouseQueryRepairEnv(base_url=base)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[DEBUG] Failed to create environment: {exc}", file=sys.stderr, flush=True)
+        return
 
     all_rewards: List[float] = []
     steps_taken = 0
@@ -278,7 +285,9 @@ async def _run_episodes() -> None:
             score = sum(episode_scores) / len(episode_scores)
             score = min(max(score, 0.0), 1.0)
         success = solved_episodes == len(episode_scores) and len(episode_scores) > 0
-
+    except Exception as exc:  # noqa: BLE001
+        print(f"[DEBUG] Failed to run episodes: {exc}", file=sys.stderr, flush=True)
+        return
     finally:
         try:
             await env.close()
