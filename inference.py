@@ -62,7 +62,7 @@ from openai import OpenAI
 from clickhouse_query_repair import ClickhouseQueryRepairAction
 from clickhouse_query_repair.client import ClickhouseQueryRepairEnv
 
-IMAGE_NAME = os.getenv("IMAGE_NAME") or os.getenv("LOCAL_IMAGE_NAME") or "prasannakumar08/clickhouse_query_repair_env:latest"
+IMAGE_NAME = "prasannakumar08/clickhouse_query_repair_env:latest"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
@@ -189,7 +189,7 @@ async def _run_episodes() -> None:
             print(f"[DEBUG] Creating environment from image: {IMAGE_NAME}", file=sys.stderr, flush=True)
             env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
         else:
-            base = os.getenv("CHQR_BASE_URL", "http://127.0.0.1:8000")
+            base = "https://prasannakumar414-clickhouse-query-repair.hf.space/web"
             print(f"[DEBUG] Creating environment from base URL: {base}", file=sys.stderr, flush=True)
             env = ClickhouseQueryRepairEnv(base_url=base)
     except Exception as exc:  # noqa: BLE001
