@@ -216,7 +216,7 @@ async def _run_episodes() -> None:
         if IMAGE_NAME:
             env = await ClickhouseQueryRepairEnv.from_docker_image(IMAGE_NAME)
         else:
-            base = "https://prasannakumar414-clickhouse-query-repair.hf.space/web"
+            base = "https://prasannakumar414-clickhouse-query-repair.hf.space"
             env = ClickhouseQueryRepairEnv(base_url=base)
     except Exception:  # noqa: BLE001
         return
@@ -228,7 +228,7 @@ async def _run_episodes() -> None:
     last_error: Optional[str] = None
     deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
     plan = _episode_task_ids()
-    num_episodes = len(plan)
+    num_episodes = 1 #len(plan)
     episode_raw_scores: List[float] = []
     solved_episodes = 0
 
