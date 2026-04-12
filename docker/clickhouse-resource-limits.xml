@@ -6,7 +6,12 @@
     <background_pool_size>12</background_pool_size>
     <mark_cache_size>536870912</mark_cache_size>
     <uncompressed_cache_size>134217728</uncompressed_cache_size>
+
     <merge_tree>
-      <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>24</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>24</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
     </merge_tree>
+
+    <background_schedule_pool_size>16</background_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>4</background_message_broker_schedule_pool_size>
+    <background_distributed_schedule_pool_size>4</background_distributed_schedule_pool_size>
 </clickhouse>
