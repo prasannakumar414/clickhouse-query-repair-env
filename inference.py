@@ -24,7 +24,7 @@ STDOUT FORMAT
 Emit exactly three line types to stdout, in order:
 
   [START] task=<task_name> env=<benchmark> model=<model_name>
-  [STEP] step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+  [STEP] step=<n> action=<action_str> reward=<0.42> done=<true|false> error=<msg|null>
   [END] success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 
 Rules:
@@ -32,11 +32,11 @@ Rules:
 - One [START] at episode begin.
 - One [STEP] per ``env.step()``, immediately after it returns.
 - One [END] after ``env.close()``, always (including on errors).
-- ``reward`` and each reward in ``rewards`` use two decimal places.
+- ``reward`` and each reward in ``rewards`` use two decimal places and lie strictly between 0 and 1.
 - ``done`` and ``success`` are lowercase ``true`` or ``false``.
 - ``error`` is the last error string, or the literal ``null``.
 - Single line per record; no embedded newlines in fields.
-- Normalized ``score`` is in [0, 1].
+- Normalized ``score`` is strictly between 0 and 1 (never exactly 0.00 or 1.00).
 
 Infra: default wall-clock budget under 20 minutes; tune ``INFERENCE_MAX_SECONDS``; targets ~2 vCPU / 8 GiB.
 
@@ -78,6 +78,13 @@ MAX_STEPS = int(os.getenv("CHQR_MAX_STEPS", "6"))
 INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
+
+# Map raw rewards/scores in [0, 1] to (0, 1) for stdout so values are never exactly 0.00 or 1.00
+# with two decimal places (uses 0.01 … 0.99).
+def _display_score(raw: float) -> float:
+    x = min(max(float(raw), 0.0), 1.0)
+    return 0.01 + 0.98 * x
+
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -198,13 +205,13 @@ async def _run_episodes() -> None:
 
     all_rewards: List[float] = []
     steps_taken = 0
-    score = 0.0
+    score = _display_score(0.0)
     success = False
     last_error: Optional[str] = None
     deadline = time.monotonic() + float(INFERENCE_MAX_SECONDS)
     plan = _episode_task_ids()
     num_episodes = len(plan)
-    episode_scores: List[float] = []
+    episode_raw_scores: List[float] = []
     solved_episodes = 0
 
     try:
@@ -251,10 +258,10 @@ async def _run_episodes() -> None:
 
                 result = await env.step(action)
                 obs = result.observation
-                reward = float(result.reward or 0.0)
-                reward = min(max(reward, 0.0), 1.0)
+                raw_reward = min(max(float(result.reward or 0.0), 0.0), 1.0)
+                reward = _display_score(raw_reward)
                 done = bool(result.done)
-                ep_rewards.append(reward)
+                ep_rewards.append(raw_reward)
                 all_rewards.append(reward)
                 steps_taken += 1
                 last_error = obs.clickhouse_error
@@ -271,20 +278,19 @@ async def _run_episodes() -> None:
                 if done:
                     break
 
-            ep_score = (
+            raw_ep = (
                 1.0
                 if ep_rewards and ep_rewards[-1] >= 0.99
                 else (sum(ep_rewards) / max(len(ep_rewards), 1))
             )
-            ep_score = min(max(ep_score, 0.0), 1.0)
-            episode_scores.append(ep_score)
+            raw_ep = min(max(raw_ep, 0.0), 1.0)
+            episode_raw_scores.append(raw_ep)
             if ep_rewards and ep_rewards[-1] >= 0.99:
                 solved_episodes += 1
 
-        if episode_scores:
-            score = sum(episode_scores) / len(episode_scores)
-            score = min(max(score, 0.0), 1.0)
-        success = solved_episodes == len(episode_scores) and len(episode_scores) > 0
+        if episode_raw_scores:
+            score = _display_score(sum(episode_raw_scores) / len(episode_raw_scores))
+        success = solved_episodes == len(episode_raw_scores) and len(episode_raw_scores) > 0
     except Exception as exc:  # noqa: BLE001
         print(f"[DEBUG] Failed to run episodes: {exc}", file=sys.stderr, flush=True)
         return
