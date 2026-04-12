@@ -26,7 +26,11 @@ class ClickhouseQueryRepairAction(Action):
 
 
 class ClickhouseQueryRepairObservation(Observation):
-    """Observation: task context, local draft feedback, and optional terminal ClickHouse outcome."""
+    """Observation after ``reset``/``step``: task text, feedback, and grader fields.
+
+    Uses the base ``metadata`` dict for structured extras (task id, ``raw_reward``,
+    episode id)—the OpenEnv pattern for step ``info``-style payloads.
+    """
 
     broken_query: str = Field(default="", description="Broken query shown to the agent")
     instruction: str = Field(default="", description="Task-specific instructions")

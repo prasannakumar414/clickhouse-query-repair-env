@@ -103,7 +103,7 @@ def check_inference_module() -> bool:
     tokens = (
         "API_BASE_URL",
         "MODEL_NAME",
-        "HF_TOKEN",
+        "OPENAI_API_KEY",
         "OpenAI",
         "[START]",
         "[STEP]",
@@ -176,7 +176,7 @@ def main() -> int:
         flush=True,
     )
     print(
-        "  - export API_BASE_URL MODEL_NAME HF_TOKEN; python inference.py",
+        "  - export API_BASE_URL MODEL_NAME OPENAI_API_KEY; python inference.py",
         flush=True,
     )
 

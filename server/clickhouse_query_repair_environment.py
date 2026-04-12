@@ -48,8 +48,8 @@ _W_EXEC = 0.10
 _W_RESULT = 0.70
 
 
-def _open_unit_interval_reward(raw: float) -> float:
-    """Map internal [0, 1] score to (0, 1) for API/observation (never exactly 0.0 or 1.0)."""
+def _reported_reward_from_raw(raw: float) -> float:
+    """Map internal grader score in ``[0, 1]`` to ``Observation.reward`` strictly in ``(0, 1)``."""
     x = min(max(float(raw), 0.0), 1.0)
     v = round(0.01 + 0.98 * x, 4)
     return min(max(v, 0.01), 0.99)
@@ -57,20 +57,15 @@ def _open_unit_interval_reward(raw: float) -> float:
 
 class ClickhouseQueryRepairEnvironment(Environment):
     """
-    Sample a repair task on reset.  Every step is evaluated against ClickHouse
-    (gated by local safety checks).  Episode auto-terminates on exact gold match
-    or when max steps are hit.
+    Real-world data/SQL repair: diagnose and fix broken ClickHouse ``SELECT`` queries
+    against real schemas (MergeTree, aggregates), with execution feedback—analogous to
+    data engineering and analytics work (not a toy game).
 
-    Reported ``reward`` is always strictly between 0 and 1 (implemented as
-    ``0.01 + 0.98 * raw`` with clamp ``[0.01, 0.99]``).  Internally, the
-    raw score blends four signals:
-
-        sql_token_similarity   (weight 0.15) -- Jaccard overlap of SQL tokens
-        required_terms_fraction(weight 0.05) -- fraction of task-mandated CH keywords
-        execution_success      (weight 0.10) -- binary: runs without error
-        result_set_similarity  (weight 0.70) -- row-count, row-match, cell overlap
-
-    Exact result match => internal raw 1.0 (reported reward 0.99; episode ends).
+    Internally, each step gets a deterministic score in ``[0.0, 1.0]`` from weighted
+    signals (partial progress toward the gold query).  The reported ``reward`` is always
+    strictly between 0 and 1 (``0.01 + 0.98 * raw``, clamped).  ``metadata.raw_reward``
+    keeps the internal ``[0, 1]`` value (``1.0`` => solved).  Extra fields use
+    ``Observation.metadata`` (OpenEnv’s ``info``-style payload).
     """
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
@@ -133,7 +128,7 @@ class ClickhouseQueryRepairEnvironment(Environment):
             step_index=0,
             max_steps=self._max_steps,
             terminal=False,
-            reward=_open_unit_interval_reward(0.0),
+            reward=_reported_reward_from_raw(0.0),
             done=False,
             metadata={**self._task_meta(), "raw_reward": 0.0},
         )
@@ -152,7 +147,7 @@ class ClickhouseQueryRepairEnvironment(Environment):
         raw_reward, exec_ok, ch_err, gold_match, result_match, feedback = (
             self._evaluate_step(sql, gold, required_terms)
         )
-        reward = _open_unit_interval_reward(raw_reward)
+        reward = _reported_reward_from_raw(raw_reward)
 
         is_last_step = self._steps_taken >= self._max_steps
         done = (raw_reward >= 1.0) or is_last_step
@@ -187,12 +182,13 @@ class ClickhouseQueryRepairEnvironment(Environment):
         required_terms: Optional[List[str]],
     ) -> Tuple[float, Optional[bool], Optional[str], Optional[bool], Optional[bool], str]:
         """
-        Compute an internal score in [0.0, 1.0] (mapped to (0, 1) by the caller):
+        Internal grader score in ``[0.0, 1.0]`` (stored as ``raw_reward`` in metadata; the
+        HTTP ``reward`` field is mapped to ``(0, 1)`` by the caller):
 
             raw = W_SQL * sql_sim + W_TERMS * terms_frac
                 + W_EXEC * exec_ok + W_RESULT * result_sim
 
-        Exact result match overrides internal raw to 1.0.
+        Exact result match overrides raw to ``1.0`` (reported reward ~0.99).
         Returns (raw_reward, execution_ok, ch_error, gold_match, result_match, feedback).
         """
         tok_sim = sql_token_similarity(candidate, gold)
@@ -232,11 +228,10 @@ class ClickhouseQueryRepairEnvironment(Environment):
             + _W_RESULT * res_sim
         )
         raw = round(min(max(raw, 0.0), 0.99), 4)
-        shown = _open_unit_interval_reward(raw)
 
         feedback_parts.append(
             f"Query executed but result differs from expected "
-            f"(sql_sim={tok_sim:.2f}, result_sim={res_sim:.2f}, reward={shown:.2f})."
+            f"(sql_sim={tok_sim:.2f}, result_sim={res_sim:.2f}, reward={_reported_reward_from_raw(raw):.2f})."
         )
         return raw, True, None, False, False, " ".join(feedback_parts)
 

@@ -5,9 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-Inference Script — ClickHouse query repair
-============================================
-MANDATORY (environment configuration)
+Baseline inference — ClickHouse query repair (OpenEnv)
+======================================================
+diagnose and repair broken ClickHouse SQL using execution feedback
+(data/analytics engineering–style work).
 
 - ``API_BASE_URL`` — OpenAI-compatible API base URL for the LLM.
 - ``MODEL_NAME`` — Model id for chat completions.
@@ -21,31 +22,27 @@ Defaults may be set for API_BASE_URL and MODEL_NAME for local testing only.
 
 STDOUT FORMAT
 -------------
-Emit exactly three line types to stdout, in order:
+Emit exactly three line types to stdout, in order::
 
-  [START] task=<task_name> env=<benchmark> model=<model_name>
-  [STEP] step=<n> action=<action_str> reward=<0.42> done=<true|false> error=<msg|null>
-  [END] success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
+    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<action_str> reward=<0.42> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 
 Rules:
 
-- One [START] at episode begin.
-- One [STEP] per ``env.step()``, immediately after it returns.
-- One [END] after ``env.close()``, always (including on errors).
-- ``reward`` and each reward in ``rewards`` use two decimal places and are strictly between 0 and 1 (never ``0.00`` or ``1.00`` when printed).
+- One ``[START]`` at episode begin.
+- One ``[STEP]`` per ``env.step()``, immediately after it returns.
+- One ``[END]`` after ``env.close()``, always (including on exception).
+- ``reward``, ``rewards``, and aggregate ``score`` use two decimal places and are **strictly between 0 and 1** (never ``0.00`` or ``1.00``).
 - ``done`` and ``success`` are lowercase ``true`` or ``false``.
-- ``error`` is the last error string, or the literal ``null``.
+- ``error`` is the last ClickHouse / validation error string, or ``null``.
 - Single line per record; no embedded newlines in fields.
-- Normalized ``score`` follows the same rule (open unit interval, implemented as ``0.01..0.99``).
 
-Infra: default wall-clock budget under 20 minutes; tune ``INFERENCE_MAX_SECONDS``; targets ~2 vCPU / 8 GiB.
+Optional env:
 
-Optional:
-
-- ``CHQR_NUM_EPISODES`` — number of **random** episodes (each ``env.reset()`` samples a task with replacement). Default ``1``.
-  Ignored when ``CHQR_EVAL_ALL_TASKS`` is set.
-- ``CHQR_EVAL_ALL_TASKS`` — if ``1`` / ``true``, run **every** task JSON once (sorted by id): ``env.reset(task_id=...)`` per episode.
-  This is the only mode that guarantees full task coverage.
+- ``CHQR_NUM_EPISODES`` — random episodes when not evaluating all tasks (default ``1``).
+- ``CHQR_EVAL_ALL_TASKS`` — if set, run every task JSON once (sorted by id).
+- ``INFERENCE_MAX_SECONDS`` — wall-clock budget (default 1140).
 """
 
 from __future__ import annotations
@@ -63,7 +60,11 @@ from clickhouse_query_repair import ClickhouseQueryRepairAction
 from clickhouse_query_repair.client import ClickhouseQueryRepairEnv
 
 IMAGE_NAME = os.getenv("IMAGE_NAME")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_KEY = (
+    os.getenv("OPENAI_API_KEY")
+    or os.getenv("HF_TOKEN")
+    or os.getenv("API_KEY")
+)
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
@@ -79,13 +80,13 @@ INFERENCE_MAX_SECONDS = int(os.getenv("INFERENCE_MAX_SECONDS", "1140"))
 TEMPERATURE = 0.35
 MAX_TOKENS = 700
 
-# Open unit interval for stdout/API: internal raw in [0,1] -> ``0.01 + 0.98 * raw``.
+# Reported rewards use ``0.01 + 0.98 * raw`` with ``raw`` in ``[0, 1]`` (open interval on stdout).
 _OPEN_LO = 0.01
 _OPEN_HI = 0.99
 
 
-def _clamp_open_stdout(x: Optional[float]) -> float:
-    """Clamp reported reward/score to (0, 1), implemented as ``[0.01, 0.99]``."""
+def _clamp_reported(x: Optional[float]) -> float:
+    """Clamp API ``reward`` to reported range ``(0, 1)`` (implemented as ``[0.01, 0.99]``)."""
     if x is None:
         return _OPEN_LO
     try:
@@ -97,28 +98,27 @@ def _clamp_open_stdout(x: Optional[float]) -> float:
     return min(max(v, _OPEN_LO), _OPEN_HI)
 
 
+def _reported_from_raw(raw: float) -> float:
+    """Same mapping as the environment: internal ``[0, 1]`` -> reported ``(0, 1)``."""
+    x = min(max(float(raw), 0.0), 1.0)
+    return _clamp_reported(0.01 + 0.98 * x)
+
+
+def _raw_from_reported(rep: float) -> float:
+    """Invert reported reward when ``metadata.raw_reward`` is missing."""
+    o = _clamp_reported(rep)
+    return min(max((o - 0.01) / 0.98, 0.0), 1.0)
+
+
 def _fmt_stdout_reward(v: float) -> str:
-    """Two decimal places; never ``0.00`` or ``1.00`` (submission validators)."""
-    x = _clamp_open_stdout(v)
+    """Two decimals; never print ``0.00`` or ``1.00``."""
+    x = _clamp_reported(v)
     s = f"{x:.2f}"
     if s == "0.00":
         return "0.01"
     if s == "1.00":
         return "0.99"
     return s
-
-
-# Map aggregate raw scores in [0, 1] to (0, 1) for [END] stdout.
-def _display_score(raw: float) -> float:
-    x = min(max(float(raw), 0.0), 1.0)
-    return _clamp_open_stdout(0.01 + 0.98 * x)
-
-
-def _raw_from_open_reward(open_r: float) -> float:
-    """Invert env mapping ``0.01 + 0.98 * raw`` when ``metadata.raw_reward`` is absent."""
-    o = _clamp_open_stdout(open_r)
-    return min(max((o - 0.01) / 0.98, 0.0), 1.0)
-
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -200,9 +200,15 @@ def get_model_sql(client: OpenAI, user_prompt: str) -> str:
 def _warn_if_missing_auth() -> None:
     if API_KEY:
         return
-    if "huggingface.co" in API_BASE_URL or "hf.co" in API_BASE_URL:
+    if "openai.com" in (API_BASE_URL or ""):
         print(
-            "WARNING: HF_TOKEN (or API_KEY) is unset; Hugging Face router calls may fail.",
+            "WARNING: OPENAI_API_KEY is unset; OpenAI API calls will fail.",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif "huggingface.co" in API_BASE_URL or "hf.co" in API_BASE_URL:
+        print(
+            "WARNING: HF_TOKEN or API_KEY is unset; Hugging Face router calls may fail.",
             file=sys.stderr,
             flush=True,
         )
@@ -223,7 +229,7 @@ async def _run_episodes() -> None:
     _warn_if_missing_auth()
     all_rewards: List[float] = []
     steps_taken = 0
-    score = _display_score(0.0)
+    score = _reported_from_raw(0.0)
     success = False
     last_error: Optional[str] = None
     env: Optional[ClickhouseQueryRepairEnv] = None
@@ -288,20 +294,19 @@ async def _run_episodes() -> None:
                 result = await env.step(action)
                 obs = result.observation
                 md = obs.metadata or {}
-                open_r = _clamp_open_stdout(obs.reward)
                 raw_reward = min(
                     max(
                         float(
                             md.get(
                                 "raw_reward",
-                                _raw_from_open_reward(open_r),
+                                _raw_from_reported(_clamp_reported(obs.reward)),
                             )
                         ),
                         0.0,
                     ),
                     1.0,
                 )
-                reward = open_r
+                reward = _clamp_reported(obs.reward)
                 done = bool(result.done)
                 ep_rewards.append(raw_reward)
                 all_rewards.append(reward)
@@ -334,7 +339,9 @@ async def _run_episodes() -> None:
                 solved_episodes += 1
 
         if episode_raw_scores:
-            score = _display_score(sum(episode_raw_scores) / len(episode_raw_scores))
+            score = _reported_from_raw(
+                sum(episode_raw_scores) / len(episode_raw_scores)
+            )
         success = solved_episodes == len(episode_raw_scores) and len(episode_raw_scores) > 0
     except Exception:  # noqa: BLE001
         pass

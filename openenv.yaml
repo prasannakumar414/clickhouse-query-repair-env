@@ -1,5 +1,8 @@
 spec_version: 1
 name: clickhouse_query_repair
+description: >-
+  Real-world ClickHouse SQL repair: fix broken analytics queries with schema hints,
+  execution feedback, and deterministic grading with rewards strictly in (0, 1).
 type: space
 runtime: fastapi
 app: clickhouse_query_repair.server.app:app
